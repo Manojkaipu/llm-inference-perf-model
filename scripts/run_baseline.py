@@ -17,6 +17,7 @@ from perfmodel import plots
 
 BATCHES = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 CONTEXTS = [512, 2048, 8192]
+BASELINE_GPUS = {g: GPUS[g] for g in ("T4", "H100-SXM")}
 GEN_LEN = 128
 
 
@@ -27,7 +28,7 @@ def main():
     args = ap.parse_args()
 
     cfg = MODELS[args.model]
-    effs = {g: PEAK for g in GPUS} if args.peak else REALISTIC
+    effs = {g: PEAK for g in BASELINE_GPUS} if args.peak else REALISTIC
     tag = f"{cfg.name}_{'peak' if args.peak else 'realistic'}"
     out, figs = ROOT / "results", ROOT / "figures"
     out.mkdir(exist_ok=True)
@@ -38,7 +39,7 @@ def main():
         ("Decode, batch 1, context 512", decode_ops(cfg, 1, 512)),
         ("Decode, batch 64, context 2048", decode_ops(cfg, 64, 2048)),
     ]
-    for gname, gpu in GPUS.items():
+    for gname, gpu in BASELINE_GPUS.items():
         tables = []
         for label, ops in scenarios:
             df = op_table(ops, gpu, effs[gname])
@@ -49,7 +50,7 @@ def main():
                        title=f"{cfg.name} on {gpu.name} roofline")
 
     rows = []
-    for (gname, gpu), b, ctx in product(GPUS.items(), BATCHES, CONTEXTS):
+    for (gname, gpu), b, ctx in product(BASELINE_GPUS.items(), BATCHES, CONTEXTS):
         p = predict(cfg, gpu, b, ctx, GEN_LEN, effs[gname])
         rows.append({"gpu": gname, "batch": b, "prompt_len": ctx, "gen_len": GEN_LEN,
                      "fits": p.fits, "ttft_s": p.ttft_s, "prefill_tok_s": p.prefill_tok_s,
@@ -58,7 +59,7 @@ def main():
     sweep = pd.DataFrame(rows)
     sweep.to_csv(out / f"sweep_{tag}.csv", index=False)
 
-    gpus = list(GPUS.values())
+    gpus = list(BASELINE_GPUS.values())
     plots.decode_throughput(cfg, gpus, effs, CONTEXTS, BATCHES, path=figs / f"decode_tps_{tag}.png")
     plots.decode_breakdown(cfg, gpus, effs, 2048, BATCHES, path=figs / f"decode_breakdown_{tag}.png")
 

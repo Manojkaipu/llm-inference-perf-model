@@ -25,7 +25,10 @@ perfmodel/plots.py     roofline, throughput, time-breakdown and validation figur
 perfmodel/validate.py  llama.cpp workloads, vectorized evaluation, efficiency fitting
 scripts/run_baseline.py  writes results/*.csv and figures/*.png
 scripts/validate.py    measured vs predicted error report -> reports/
-notebooks/t4_llamacpp_benchmark.ipynb  Colab T4 measurement run
+notebooks/gpu_llamacpp_benchmark.ipynb  Colab measurement run (any T4/L4/A100/H100)
+notebooks/llamacpp_kernel_probe.ipynb   fine batch sweep, CUDA-graphs A/B, Nsight kernel summary
+notebooks/make_notebooks.py           generates both notebooks (shared setup cells)
+scripts/analyze_probe.py              kernel probe report -> reports/kernel_probe_*.md
 tests/                 sanity checks, plus fit recovery on synthetic measurements
 ```
 
@@ -38,9 +41,18 @@ python -m pytest -q
 
 ## Validation workflow
 
-1. Open `notebooks/t4_llamacpp_benchmark.ipynb` in Colab and choose Run all (T4 runtime, ~30 min).
-2. Unzip the downloaded `t4_llamacpp.zip` into `measurements/t4_llamacpp/`.
-3. `python scripts/validate.py measurements/t4_llamacpp` writes `reports/validation_*.md` with the error report.
+1. Open `notebooks/gpu_llamacpp_benchmark.ipynb` in Colab, pick a GPU runtime, and choose
+   Run all (~30 min). The notebook detects the GPU, builds llama.cpp for its
+   architecture, and sizes the batch grid to its memory.
+2. Unzip the downloaded `<gpu>_llamacpp.zip` into `measurements/<gpu>_llamacpp/`.
+3. `python scripts/validate.py measurements/<gpu>_llamacpp` detects the GPU from
+   `env.json` and writes `reports/validation_*.md` with the error report. It also writes
+   `results/calibrated_*.json`, which the sweep agent then picks up as that GPU's
+   "calibrated" profile.
+
+To investigate a step-time anomaly, run `notebooks/llamacpp_kernel_probe.ipynb` on the
+same GPU type, unzip it into `measurements/<gpu>_kernel_probe/`, and run
+`python scripts/analyze_probe.py measurements/<gpu>_kernel_probe`.
 
 The report compares four efficiency profiles: datasheet **peak**, the hand-set
 **prior**, **microbench** (bandwidth and FLOP/s measured with PyTorch on the

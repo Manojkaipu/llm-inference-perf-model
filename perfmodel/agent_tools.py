@@ -17,7 +17,11 @@ from .predict import op_table
 from .sweep import EVENTS, find_transition, point
 
 MAX_POINTS = 80
-PROFILES = load_profiles()
+_ALL_PROFILES = load_profiles()
+# The reference pair plus any other GPU that has been calibrated against measurements.
+AGENT_GPUS = {g: GPUS[g] for g in GPUS
+              if g in ("T4", "H100-SXM") or "calibrated" in _ALL_PROFILES[g]}
+PROFILES = {g: _ALL_PROFILES[g] for g in AGENT_GPUS}
 
 
 def _round(x):
@@ -37,8 +41,8 @@ def _dump(obj) -> str:
 def _resolve(model: str, gpu: str, profile: str):
     if model not in MODELS:
         raise ValueError(f"unknown model {model!r}; choose from {list(MODELS)}")
-    if gpu not in GPUS:
-        raise ValueError(f"unknown gpu {gpu!r}; choose from {list(GPUS)}")
+    if gpu not in AGENT_GPUS:
+        raise ValueError(f"unknown gpu {gpu!r}; choose from {list(AGENT_GPUS)}")
     if profile not in PROFILES[gpu]:
         raise ValueError(f"profile {profile!r} not available for {gpu}; "
                          f"choose from {list(PROFILES[gpu])}")
@@ -64,7 +68,7 @@ def describe_setup() -> str:
                                  "attention_half_work": e.attention_half_work,
                                  "overlap": None if e.overlap == float("inf") else e.overlap}
                              for p, (e, prov) in PROFILES[n].items()}}
-            for n, g in GPUS.items()}
+            for n, g in AGENT_GPUS.items()}
     validation = []
     for path in sorted(RESULTS.glob("validation_summary_*.csv")):
         df = pd.read_csv(path)
@@ -158,7 +162,7 @@ def op_breakdown(model: str, gpu: str, profile: str, phase: str, batch: int,
 # --- numeric-claim audit --------------------------------------------------------
 
 _NUM = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
-_IDENTIFIERS = [*MODELS, *GPUS, "H100", "T4", "fp16", "FP16", "Llama-3", "SwiGLU"]
+_IDENTIFIERS = [*MODELS, *GPUS, "H100", "A100", "T4", "L4", "fp16", "FP16", "Llama-3", "SwiGLU"]
 
 
 def extract_numbers(text: str) -> list[tuple[str, float]]:

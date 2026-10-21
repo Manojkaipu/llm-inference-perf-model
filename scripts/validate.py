@@ -1,6 +1,6 @@
 """Validate predictions against measured llama.cpp runs and write an error report.
 
-    python scripts/validate.py measurements/t4_llamacpp [--model TinyLlama-1.1B] [--gpu T4]
+    python scripts/validate.py measurements/<gpu>_llamacpp [--model TinyLlama-1.1B] [--gpu T4]
 
 Profiles compared:
   peak        datasheet peaks, no overhead
@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from perfmodel import GPUS, MODELS, PEAK, REALISTIC, plots
+from perfmodel.hardware import gpu_from_name
 from perfmodel.validate import (CompiledCases, case_ops, error_summary, fit_efficiency,
                                 flag_anomalies, gpu_log_summary, load_cases, load_env,
                                 microbench_efficiency, predict_cases)
@@ -56,13 +57,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("meas_dir", type=Path)
     ap.add_argument("--model", default="TinyLlama-1.1B", choices=MODELS)
-    ap.add_argument("--gpu", default="T4", choices=GPUS)
+    ap.add_argument("--gpu", default=None, choices=GPUS,
+                    help="GPU spec to compare against (default: detected from env.json)")
     ap.add_argument("--train-prompt", type=int, default=512,
                     help="batched-bench prompt length used for fitting; others are held out")
     args = ap.parse_args()
 
-    cfg, gpu = MODELS[args.model], GPUS[args.gpu]
     env = load_env(args.meas_dir)
+    cfg = MODELS[args.model]
+    gpu = GPUS[args.gpu] if args.gpu else gpu_from_name(env.get("gpu_name", ""))
     gpulog = gpu_log_summary(args.meas_dir)
     all_cases = load_cases(args.meas_dir)
 

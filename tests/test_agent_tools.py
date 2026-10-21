@@ -76,3 +76,25 @@ def test_audit_numbers():
     r = audit_numbers(report, sources)
     assert r["unverified"] == ["4242"]
     assert r["checked"] == 4
+
+
+def test_kernel_categories():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from analyze_probe import categorize
+    assert categorize("void mul_mat_vec_f<__half, float, 2>(...)") == "custom matvec (mul_mat_vec)"
+    assert categorize("turing_h1688gemm_128x128_ldg8_nn") == "cuBLAS / CUTLASS GEMM"
+    assert categorize("sm80_xmma_gemm_f16f16_f16f32") == "cuBLAS / CUTLASS GEMM"
+    assert categorize("void flash_attn_ext_vec<128, 1>(...)") == "flash attention"
+    assert categorize("void convert_unary<float, __half>(...)") == "type convert / copy"
+    assert categorize("void rms_norm_f32<1024>(...)") == "norm"
+
+
+def test_gpu_from_name():
+    from perfmodel.hardware import gpu_from_name
+    assert gpu_from_name("Tesla T4").name == "T4"
+    assert gpu_from_name("NVIDIA H100 80GB HBM3").name == "H100-SXM"
+    assert gpu_from_name("NVIDIA H100 PCIe").name == "H100-PCIe"
+    assert gpu_from_name("NVIDIA A100-SXM4-40GB").name == "A100-40GB"
+    assert gpu_from_name("NVIDIA L4").name == "L4"
