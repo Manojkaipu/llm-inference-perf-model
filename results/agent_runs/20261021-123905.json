@@ -1,0 +1,967 @@
+{
+ "model": "claude-opus-5-5",
+ "effort": "high",
+ "task": "Map the bottleneck transitions for every model on both GPUs. Cover decode across batch size and context length, prefill across prompt length, the batch and context limits set by memory capacity, and how the picture differs between the T4 and H100 and between model sizes. Explain the mechanism behind each shift.",
+ "usage": {
+  "input": 30,
+  "output": 21918,
+  "cache_read": 448331,
+  "cache_write": 66477
+ },
+ "cost_usd": 0.8605312,
+ "audit": {
+  "checked": 190,
+  "unverified": []
+ },
+ "tool_calls": [
+  {
+   "tool": "describe_setup",
+   "input": {},
+   "output": "{\"models\":{\"TinyLlama-1.1B\":{\"params_b\":1.1,\"layers\":22,\"hidden\":2048,\"q_heads\":32,\"kv_heads\":4,\"weights_gb_fp16\":2.2,\"kv_cache_kb_per_token\":22.53},\"Llama-3.2-1B\":{\"params_b\":1.236,\"layers\":16,\"hidden\":2048,\"q_heads\":32,\"kv_heads\":8,\"weights_gb_fp16\":2.472,\"kv_cache_kb_per_token\":32.77},\"Llama-3.1-8B\":{\"params_b\":8.03,\"layers\":32,\"hidden\":4096,\"q_heads\":32,\"kv_heads\":8,\"weights_gb_fp16\":16.06,\"kv_cache_kb_per_token\":131.1}},\"gpus\":{\"T4\":{\"fp16_tensor_tflops\":65.0,\"mem_bw_gb_s\":320.0,\"memory_gb\":16.0,\"ridge_flop_per_byte\":203.1,\"profiles\":{\"peak\":{\"provenance\":\"datasheet peaks, no overhead (upper bound)\",\"compute_eff\":1.0,\"memory_eff\":1.0,\"kernel_overhead_us\":0.0,\"attention_half_work\":null,\"overlap\":null},\"prior\":{\"provenance\":\"hand-set efficiencies, not measured\",\"compute_eff\":0.45,\"memory_eff\":0.8,\"kernel_overhead_us\":4.0,\"attention_half_work\":null,\"overlap\":null},\"calibrated\":{\"provenance\":\"fitted to measured runs (TinyLlama-1.1B_T4_llamacpp); validated within ~9% decode / ~4% prefill held-out MAPE for that model and engine. Other models on this GPU are an extrapolation.\",\"compute_eff\":0.2566,\"memory_eff\":0.8533,\"kernel_overhead_us\":9.624,\"attention_half_work\":12.88,\"overlap\":1.107}}},\"H100-SXM\":{\"fp16_tensor_tflops\":989.4,\"mem_bw_gb_s\":3350.0,\"memory_gb\":80.0,\"ridge_flop_per_byte\":295.3,\"profiles\":{\"peak\":{\"provenance\":\"datasheet peaks, no overhead (upper bound)\",\"compute_eff\":1.0,\"memory_eff\":1.0,\"kernel_overhead_us\":0.0,\"attention_half_work\":null,\"overlap\":null},\"prior\":{\"provenance\":\"hand-set efficiencies, not measured\",\"compute_eff\":0.7,\"memory_eff\":0.85,\"kernel_overhead_us\":3.0,\"attention_half_work\":null,\"overlap\":null}}}},\"validation\":[{\"run\":\"TinyLlama-1.1B_T4_llamacpp\",\"held_out_mape_pct\":[{\"phase\":\"decode\",\"profile\":\"roofline\",\"mape_pct\":13.48},{\"phase\":\"decode\",\"profile\":\"refined\",\"mape_pct\":8.685},{\"phase\":\"prefill\",\"profile\":\"roofline\",\"mape_pct\":3.464},{\"phase\":\"prefill\",\"profile\":\"refined\",\"mape_pct\":4.395}]}],\"notes\":[\"decode tokens_per_s = batch / time of one decode step at that context\",\"prefill tokens_per_s = batch * prompt / time of one prefill pass\",\"memory fit assumes weights + KV cache <= 90% of GPU memory\"]}",
+   "seconds": 0.015
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "batches": [
+     1,
+     4,
+     16,
+     64,
+     256
+    ],
+    "contexts": [
+     512,
+     2048,
+     8192,
+     32768
+    ]
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"points\":[{\"phase\":\"decode\",\"batch\":1,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.212,\"pass_time_ms\":10.42,\"tokens_per_s\":96.0,\"share\":{\"linear\":0.7348,\"attention\":0.01775,\"elementwise\":0.0007676,\"overhead\":0.2467},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.01158},{\"phase\":\"decode\",\"batch\":4,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.246,\"pass_time_ms\":10.86,\"tokens_per_s\":368.4,\"share\":{\"linear\":0.7305,\"attention\":0.03001,\"elementwise\":0.002761,\"overhead\":0.2367},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.04632},{\"phase\":\"decode\",\"batch\":16,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.385,\"pass_time_ms\":12.77,\"tokens_per_s\":1253.0,\"share\":{\"linear\":0.7199,\"attention\":0.06972,\"elementwise\":0.009229,\"overhead\":0.2012},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1853},{\"phase\":\"decode\",\"batch\":64,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.94,\"pass_time_ms\":21.0,\"tokens_per_s\":3047.0,\"share\":{\"linear\":0.7053,\"attention\":0.15,\"elementwise\":0.02235,\"overhead\":0.1223},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7411},{\"phase\":\"decode\",\"batch\":256,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":5.159,\"pass_time_ms\":55.3,\"tokens_per_s\":4629.0,\"share\":{\"linear\":0.6992,\"attention\":0.2204,\"elementwise\":0.03392,\"overhead\":0.04646},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.964},{\"phase\":\"decode\",\"batch\":1,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.246,\"pass_time_ms\":10.96,\"tokens_per_s\":91.23,\"share\":{\"linear\":0.6982,\"attention\":0.06662,\"elementwise\":0.0007294,\"overhead\":0.2344},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.04618},{\"phase\":\"decode\",\"batch\":4,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.385,\"pass_time_ms\":11.82,\"tokens_per_s\":338.5,\"share\":{\"linear\":0.6711,\"attention\":0.1089,\"elementwise\":0.002536,\"overhead\":0.2174},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1847},{\"phase\":\"decode\",\"batch\":16,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.939,\"pass_time_ms\":15.4,\"tokens_per_s\":1039.0,\"share\":{\"linear\":0.597,\"attention\":0.2285,\"elementwise\":0.007654,\"overhead\":0.1668},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7389},{\"phase\":\"decode\",\"batch\":64,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":5.154,\"pass_time_ms\":30.3,\"tokens_per_s\":2112.0,\"share\":{\"linear\":0.4889,\"attention\":0.4108,\"elementwise\":0.01549,\"overhead\":0.0848},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.956},{\"phase\":\"decode\",\"batch\":256,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":14.02,\"pass_time_ms\":91.29,\"tokens_per_s\":2804.0,\"share\":{\"linear\":0.4236,\"attention\":0.5277,\"elementwise\":0.02055,\"overhead\":0.02815},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":11.82},{\"phase\":\"decode\",\"batch\":1,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":2.385,\"pass_time_ms\":13.14,\"tokens_per_s\":76.09,\"share\":{\"linear\":0.5823,\"attention\":0.2215,\"elementwise\":0.0006083,\"overhead\":0.1955},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1846},{\"phase\":\"decode\",\"batch\":4,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":2.938,\"pass_time_ms\":15.66,\"tokens_per_s\":255.4,\"share\":{\"linear\":0.5064,\"attention\":0.3276,\"elementwise\":0.001914,\"overhead\":0.1641},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7384},{\"phase\":\"decode\",\"batch\":16,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":5.153,\"pass_time_ms\":25.91,\"tokens_per_s\":617.4,\"share\":{\"linear\":0.3548,\"attention\":0.5415,\"elementwise\":0.004549,\"overhead\":0.09916},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.954},{\"phase\":\"decode\",\"batch\":64,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":14.01,\"pass_time_ms\":67.5,\"tokens_per_s\":948.1,\"share\":{\"linear\":0.2195,\"attention\":0.7355,\"elementwise\":0.006955,\"overhead\":0.03807},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":11.81},{\"phase\":\"decode\",\"batch\":256,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":49.45,\"pass_time_ms\":235.2,\"tokens_per_s\":1088.0,\"share\":{\"linear\":0.1644,\"attention\":0.8167,\"elementwise\":0.007975,\"overhead\":0.01092},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":47.26},{\"phase\":\"decode\",\"batch\":1,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":2.938,\"pass_time_ms\":21.87,\"tokens_per_s\":45.73,\"share\":{\"linear\":0.35,\"attention\":0.5322,\"elementwise\":0.0003656,\"overhead\":0.1175},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7382},{\"phase\":\"decode\",\"batch\":4,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":5.153,\"pass_time_ms\":31.04,\"tokens_per_s\":128.9,\"share\":{\"linear\":0.2555,\"attention\":0.6608,\"elementwise\":0.0009655,\"overhead\":0.08278},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.953},{\"phase\":\"decode\",\"batch\":16,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":14.01,\"pass_time_ms\":67.97,\"tokens_per_s\":235.4,\"share\":{\"linear\":0.1353,\"attention\":0.8252,\"elementwise\":0.001734,\"overhead\":0.03781},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":11.81},{\"phase\":\"decode\",\"batch\":64,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":49.45,\"pass_time_ms\":216.3,\"tokens_per_s\":295.9,\"share\":{\"linear\":0.06849,\"attention\":0.9175,\"elementwise\":0.002171,\"overhead\":0.01188},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":47.25},{\"phase\":\"decode\",\"batch\":256,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":191.2,\"pass_time_ms\":811.1,\"tokens_per_s\":315.6,\"share\":{\"linear\":0.04768,\"attention\":0.9468,\"elementwise\":0.002313,\"overhead\":0.003168},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":189.0}]}",
+   "seconds": 0.005
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "batches": [
+     1,
+     4,
+     16,
+     64,
+     256
+    ],
+    "contexts": [
+     512,
+     2048,
+     8192,
+     32768
+    ]
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"points\":[{\"phase\":\"decode\",\"batch\":1,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.488,\"pass_time_ms\":11.19,\"tokens_per_s\":89.36,\"share\":{\"linear\":0.817,\"attention\":0.01469,\"elementwise\":0.0006193,\"overhead\":0.1677},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.01684},{\"phase\":\"decode\",\"batch\":4,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.539,\"pass_time_ms\":11.73,\"tokens_per_s\":340.9,\"share\":{\"linear\":0.8072,\"attention\":0.03058,\"elementwise\":0.002237,\"overhead\":0.1599},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.06737},{\"phase\":\"decode\",\"batch\":16,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.741,\"pass_time_ms\":14.09,\"tokens_per_s\":1135.0,\"share\":{\"linear\":0.7788,\"attention\":0.08065,\"elementwise\":0.007346,\"overhead\":0.1332},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2695},{\"phase\":\"decode\",\"batch\":64,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":3.547,\"pass_time_ms\":24.2,\"tokens_per_s\":2645.0,\"share\":{\"linear\":0.7298,\"attention\":0.1755,\"elementwise\":0.01705,\"overhead\":0.07756},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.078},{\"phase\":\"decode\",\"batch\":256,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":6.775,\"pass_time_ms\":66.28,\"tokens_per_s\":3862.0,\"share\":{\"linear\":0.695,\"attention\":0.2518,\"elementwise\":0.02488,\"overhead\":0.02832},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.312},{\"phase\":\"decode\",\"batch\":1,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.539,\"pass_time_ms\":11.68,\"tokens_per_s\":85.62,\"share\":{\"linear\":0.7828,\"attention\":0.05592,\"elementwise\":0.0005934,\"overhead\":0.1607},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.06717},{\"phase\":\"decode\",\"batch\":4,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.74,\"pass_time_ms\":12.8,\"tokens_per_s\":312.5,\"share\":{\"linear\":0.74,\"attention\":0.1113,\"elementwise\":0.002051,\"overhead\":0.1466},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2687},{\"phase\":\"decode\",\"batch\":16,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":3.546,\"pass_time_ms\":17.47,\"tokens_per_s\":915.9,\"share\":{\"linear\":0.6282,\"attention\":0.2584,\"elementwise\":0.005926,\"overhead\":0.1074},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.075},{\"phase\":\"decode\",\"batch\":64,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":6.769,\"pass_time_ms\":36.82,\"tokens_per_s\":1738.0,\"share\":{\"linear\":0.4796,\"attention\":0.4582,\"elementwise\":0.01121,\"overhead\":0.05097},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.299},{\"phase\":\"decode\",\"batch\":256,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":19.66,\"pass_time_ms\":115.9,\"tokens_per_s\":2209.0,\"share\":{\"linear\":0.3975,\"attention\":0.5721,\"elementwise\":0.01423,\"overhead\":0.01619},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":17.2},{\"phase\":\"decode\",\"batch\":1,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":2.74,\"pass_time_ms\":13.63,\"tokens_per_s\":73.35,\"share\":{\"linear\":0.6706,\"attention\":0.1913,\"elementwise\":0.0005083,\"overhead\":0.1376},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2685},{\"phase\":\"decode\",\"batch\":4,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":3.546,\"pass_time_ms\":17.06,\"tokens_per_s\":234.4,\"share\":{\"linear\":0.5551,\"attention\":0.3334,\"elementwise\":0.001538,\"overhead\":0.11},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.074},{\"phase\":\"decode\",\"batch\":16,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":6.767,\"pass_time_ms\":30.98,\"tokens_per_s\":516.5,\"share\":{\"linear\":0.3542,\"attention\":0.5818,\"elementwise\":0.003341,\"overhead\":0.06058},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.296},{\"phase\":\"decode\",\"batch\":64,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":19.65,\"pass_time_ms\":87.32,\"tokens_per_s\":732.9,\"share\":{\"linear\":0.2023,\"attention\":0.7715,\"elementwise\":0.004725,\"overhead\":0.02149},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":17.18},{\"phase\":\"decode\",\"batch\":256,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":71.2,\"pass_time_ms\":314.3,\"tokens_per_s\":814.4,\"share\":{\"linear\":0.1465,\"attention\":0.8422,\"elementwise\":0.005246,\"overhead\":0.00597},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":68.74},{\"phase\":\"decode\",\"batch\":1,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":3.545,\"pass_time_ms\":21.45,\"tokens_per_s\":46.62,\"share\":{\"linear\":0.4262,\"attention\":0.486,\"elementwise\":0.0003231,\"overhead\":0.08748},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.074},{\"phase\":\"decode\",\"batch\":4,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":6.767,\"pass_time_ms\":34.12,\"tokens_per_s\":117.2,\"share\":{\"linear\":0.2776,\"attention\":0.6667,\"elementwise\":0.0007692,\"overhead\":0.055},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.295},{\"phase\":\"decode\",\"batch\":16,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":19.65,\"pass_time_ms\":85.02,\"tokens_per_s\":188.2,\"share\":{\"linear\":0.1291,\"attention\":0.8476,\"elementwise\":0.001218,\"overhead\":0.02207},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":17.18},{\"phase\":\"decode\",\"batch\":64,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":71.19,\"pass_time_ms\":289.3,\"tokens_per_s\":221.2,\"share\":{\"linear\":0.06104,\"attention\":0.931,\"elementwise\":0.001426,\"overhead\":0.006487},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":68.72},{\"phase\":\"decode\",\"batch\":256,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":277.4,\"pass_time_ms\":1108.0,\"tokens_per_s\":231.0,\"share\":{\"linear\":0.04157,\"attention\":0.9553,\"elementwise\":0.001488,\"overhead\":0.001694},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":274.9}]}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "batches": [
+     1,
+     4
+    ],
+    "contexts": [
+     512,
+     2048
+    ]
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"points\":[{\"phase\":\"decode\",\"batch\":1,\"context\":512,\"fits_in_memory\":false,\"memory_needed_gb\":16.13,\"pass_time_ms\":59.92,\"tokens_per_s\":16.69,\"share\":{\"linear\":0.9264,\"attention\":0.01098,\"elementwise\":0.0004342,\"overhead\":0.06216},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.06737},{\"phase\":\"decode\",\"batch\":4,\"context\":512,\"fits_in_memory\":false,\"memory_needed_gb\":16.33,\"pass_time_ms\":62.72,\"tokens_per_s\":63.78,\"share\":{\"linear\":0.9162,\"attention\":0.02287,\"elementwise\":0.001566,\"overhead\":0.05938},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.2695},{\"phase\":\"decode\",\"batch\":1,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":16.33,\"pass_time_ms\":61.87,\"tokens_per_s\":16.16,\"share\":{\"linear\":0.8972,\"attention\":0.04221,\"elementwise\":0.0004204,\"overhead\":0.0602},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.2687},{\"phase\":\"decode\",\"batch\":4,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":17.13,\"pass_time_ms\":66.98,\"tokens_per_s\":59.72,\"share\":{\"linear\":0.8579,\"attention\":0.08507,\"elementwise\":0.001467,\"overhead\":0.0556},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":1.075}]}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "batches": [
+     1,
+     4,
+     16,
+     64,
+     256,
+     1024
+    ],
+    "contexts": [
+     512,
+     2048,
+     8192,
+     32768
+    ]
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"points\":[{\"phase\":\"decode\",\"batch\":1,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.212,\"pass_time_ms\":1.533,\"tokens_per_s\":652.4,\"share\":{\"linear\":0.4743,\"attention\":0.002689,\"elementwise\":0.0004744,\"overhead\":0.5225},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.01158},{\"phase\":\"decode\",\"batch\":4,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.246,\"pass_time_ms\":1.549,\"tokens_per_s\":2583.0,\"share\":{\"linear\":0.4704,\"attention\":0.01065,\"elementwise\":0.001753,\"overhead\":0.5172},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.04632},{\"phase\":\"decode\",\"batch\":16,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.385,\"pass_time_ms\":1.612,\"tokens_per_s\":9926.0,\"share\":{\"linear\":0.4555,\"attention\":0.04092,\"elementwise\":0.006615,\"overhead\":0.4969},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1853},{\"phase\":\"decode\",\"batch\":64,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.94,\"pass_time_ms\":1.865,\"tokens_per_s\":34320.0,\"share\":{\"linear\":0.4062,\"attention\":0.1415,\"elementwise\":0.02277,\"overhead\":0.4296},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7411},{\"phase\":\"decode\",\"batch\":256,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":5.159,\"pass_time_ms\":2.876,\"tokens_per_s\":89010.0,\"share\":{\"linear\":0.2956,\"attention\":0.3669,\"elementwise\":0.05899,\"overhead\":0.2785},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.964},{\"phase\":\"decode\",\"batch\":1024,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":14.03,\"pass_time_ms\":8.759,\"tokens_per_s\":116900.0,\"share\":{\"linear\":0.3492,\"attention\":0.4819,\"elementwise\":0.07745,\"overhead\":0.09145},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":11.86},{\"phase\":\"decode\",\"batch\":1,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.246,\"pass_time_ms\":1.545,\"tokens_per_s\":647.2,\"share\":{\"linear\":0.4706,\"attention\":0.01053,\"elementwise\":0.0004706,\"overhead\":0.5184},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.04618},{\"phase\":\"decode\",\"batch\":4,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.385,\"pass_time_ms\":1.597,\"tokens_per_s\":2504.0,\"share\":{\"linear\":0.4561,\"attention\":0.04075,\"elementwise\":0.001699,\"overhead\":0.5015},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1847},{\"phase\":\"decode\",\"batch\":16,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.939,\"pass_time_ms\":1.806,\"tokens_per_s\":8858.0,\"share\":{\"linear\":0.4065,\"attention\":0.1442,\"elementwise\":0.005903,\"overhead\":0.4434},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7389},{\"phase\":\"decode\",\"batch\":64,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":5.154,\"pass_time_ms\":2.642,\"tokens_per_s\":24220.0,\"share\":{\"linear\":0.2866,\"attention\":0.3942,\"elementwise\":0.01607,\"overhead\":0.3031},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.956},{\"phase\":\"decode\",\"batch\":256,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":14.02,\"pass_time_ms\":5.987,\"tokens_per_s\":42760.0,\"share\":{\"linear\":0.142,\"attention\":0.6959,\"elementwise\":0.02834,\"overhead\":0.1338},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":11.82},{\"phase\":\"decode\",\"batch\":1024,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":49.47,\"pass_time_ms\":21.2,\"tokens_per_s\":48300.0,\"share\":{\"linear\":0.1443,\"attention\":0.786,\"elementwise\":0.03199,\"overhead\":0.03778},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":47.29},{\"phase\":\"decode\",\"batch\":1,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":2.385,\"pass_time_ms\":1.594,\"tokens_per_s\":627.5,\"share\":{\"linear\":0.4562,\"attention\":0.04071,\"elementwise\":0.0004563,\"overhead\":0.5026},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1846},{\"phase\":\"decode\",\"batch\":4,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":2.938,\"pass_time_ms\":1.792,\"tokens_per_s\":2232.0,\"share\":{\"linear\":0.4066,\"attention\":0.1448,\"elementwise\":0.001515,\"overhead\":0.4471},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7384},{\"phase\":\"decode\",\"batch\":16,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":5.153,\"pass_time_ms\":2.584,\"tokens_per_s\":6192.0,\"share\":{\"linear\":0.2842,\"attention\":0.4017,\"elementwise\":0.004127,\"overhead\":0.31},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.954},{\"phase\":\"decode\",\"batch\":64,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":14.01,\"pass_time_ms\":5.753,\"tokens_per_s\":11120.0,\"share\":{\"linear\":0.1317,\"attention\":0.7217,\"elementwise\":0.00738,\"overhead\":0.1392},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":11.81},{\"phase\":\"decode\",\"batch\":256,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":49.45,\"pass_time_ms\":18.43,\"tokens_per_s\":13890.0,\"share\":{\"linear\":0.04613,\"attention\":0.9012,\"elementwise\":0.009204,\"overhead\":0.04346},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":47.26},{\"phase\":\"decode\",\"batch\":1024,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":191.2,\"pass_time_ms\":70.98,\"tokens_per_s\":14430.0,\"share\":{\"linear\":0.0431,\"attention\":0.9361,\"elementwise\":0.009558,\"overhead\":0.01129},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":189.0},{\"phase\":\"decode\",\"batch\":1,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":2.938,\"pass_time_ms\":1.788,\"tokens_per_s\":559.3,\"share\":{\"linear\":0.4066,\"attention\":0.145,\"elementwise\":0.0004067,\"overhead\":0.448},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7382},{\"phase\":\"decode\",\"batch\":4,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":5.153,\"pass_time_ms\":2.569,\"tokens_per_s\":1557.0,\"share\":{\"linear\":0.2835,\"attention\":0.4037,\"elementwise\":0.001056,\"overhead\":0.3117},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.953},{\"phase\":\"decode\",\"batch\":16,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":14.01,\"pass_time_ms\":5.695,\"tokens_per_s\":2809.0,\"share\":{\"linear\":0.1289,\"attention\":0.7285,\"elementwise\":0.001872,\"overhead\":0.1407},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":11.81},{\"phase\":\"decode\",\"batch\":64,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":49.45,\"pass_time_ms\":18.2,\"tokens_per_s\":3517.0,\"share\":{\"linear\":0.04162,\"attention\":0.912,\"elementwise\":0.002333,\"overhead\":0.04402},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":47.25},{\"phase\":\"decode\",\"batch\":256,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":191.2,\"pass_time_ms\":68.21,\"tokens_per_s\":3753.0,\"share\":{\"linear\":0.01246,\"attention\":0.9733,\"elementwise\":0.002487,\"overhead\":0.01174},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":189.0},{\"phase\":\"decode\",\"batch\":1024,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":758.1,\"pass_time_ms\":270.1,\"tokens_per_s\":3792.0,\"share\":{\"linear\":0.01133,\"attention\":0.9832,\"elementwise\":0.002512,\"overhead\":0.002966},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":756.0}]}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "batches": [
+     1,
+     4,
+     16,
+     64,
+     256,
+     1024
+    ],
+    "contexts": [
+     512,
+     2048,
+     8192,
+     32768
+    ]
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"points\":[{\"phase\":\"decode\",\"batch\":1,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.488,\"pass_time_ms\":1.46,\"tokens_per_s\":684.9,\"share\":{\"linear\":0.5948,\"attention\":0.004075,\"elementwise\":0.0004305,\"overhead\":0.4007},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.01684},{\"phase\":\"decode\",\"batch\":4,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.539,\"pass_time_ms\":1.481,\"tokens_per_s\":2701.0,\"share\":{\"linear\":0.5874,\"attention\":0.01607,\"elementwise\":0.001601,\"overhead\":0.395},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.06737},{\"phase\":\"decode\",\"batch\":16,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":2.741,\"pass_time_ms\":1.566,\"tokens_per_s\":10220.0,\"share\":{\"linear\":0.5596,\"attention\":0.0608,\"elementwise\":0.005969,\"overhead\":0.3736},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2695},{\"phase\":\"decode\",\"batch\":64,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":3.547,\"pass_time_ms\":1.904,\"tokens_per_s\":33610.0,\"share\":{\"linear\":0.4732,\"attention\":0.2,\"elementwise\":0.01956,\"overhead\":0.3072},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.078},{\"phase\":\"decode\",\"batch\":256,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":6.775,\"pass_time_ms\":3.257,\"tokens_per_s\":78590.0,\"share\":{\"linear\":0.3071,\"attention\":0.4676,\"elementwise\":0.04569,\"overhead\":0.1796},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.312},{\"phase\":\"decode\",\"batch\":1024,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":19.69,\"pass_time_ms\":10.93,\"tokens_per_s\":93720.0,\"share\":{\"linear\":0.3344,\"attention\":0.5576,\"elementwise\":0.05447,\"overhead\":0.05354},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":17.25},{\"phase\":\"decode\",\"batch\":1,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.539,\"pass_time_ms\":1.478,\"tokens_per_s\":676.7,\"share\":{\"linear\":0.5877,\"attention\":0.01599,\"elementwise\":0.0004254,\"overhead\":0.3959},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.06717},{\"phase\":\"decode\",\"batch\":4,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":2.74,\"pass_time_ms\":1.552,\"tokens_per_s\":2577.0,\"share\":{\"linear\":0.5606,\"attention\":0.06089,\"elementwise\":0.001528,\"overhead\":0.377},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2687},{\"phase\":\"decode\",\"batch\":16,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":3.546,\"pass_time_ms\":1.849,\"tokens_per_s\":8655.0,\"share\":{\"linear\":0.474,\"attention\":0.2045,\"elementwise\":0.005056,\"overhead\":0.3165},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.075},{\"phase\":\"decode\",\"batch\":64,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":6.769,\"pass_time_ms\":3.035,\"tokens_per_s\":21090.0,\"share\":{\"linear\":0.2969,\"attention\":0.4981,\"elementwise\":0.01227,\"overhead\":0.1927},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.299},{\"phase\":\"decode\",\"batch\":256,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":19.66,\"pass_time_ms\":7.782,\"tokens_per_s\":32900.0,\"share\":{\"linear\":0.1285,\"attention\":0.7772,\"elementwise\":0.01912,\"overhead\":0.07517},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":17.2},{\"phase\":\"decode\",\"batch\":1024,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":71.22,\"pass_time_ms\":29.03,\"tokens_per_s\":35280.0,\"share\":{\"linear\":0.1259,\"attention\":0.8335,\"elementwise\":0.0205,\"overhead\":0.02015},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":68.79},{\"phase\":\"decode\",\"batch\":1,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":2.74,\"pass_time_ms\":1.548,\"tokens_per_s\":645.8,\"share\":{\"linear\":0.5609,\"attention\":0.06092,\"elementwise\":0.000406,\"overhead\":0.3778},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2685},{\"phase\":\"decode\",\"batch\":4,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":3.546,\"pass_time_ms\":1.835,\"tokens_per_s\":2180.0,\"share\":{\"linear\":0.4742,\"attention\":0.2057,\"elementwise\":0.001293,\"overhead\":0.3189},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.074},{\"phase\":\"decode\",\"batch\":16,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":6.767,\"pass_time_ms\":2.98,\"tokens_per_s\":5369.0,\"share\":{\"linear\":0.2941,\"attention\":0.5065,\"elementwise\":0.003136,\"overhead\":0.1963},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.296},{\"phase\":\"decode\",\"batch\":64,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":19.65,\"pass_time_ms\":7.56,\"tokens_per_s\":8465.0,\"share\":{\"linear\":0.1192,\"attention\":0.7985,\"elementwise\":0.004926,\"overhead\":0.07738},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":17.18},{\"phase\":\"decode\",\"batch\":256,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":71.2,\"pass_time_ms\":25.88,\"tokens_per_s\":9891.0,\"share\":{\"linear\":0.03865,\"attention\":0.933,\"elementwise\":0.00575,\"overhead\":0.0226},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":68.74},{\"phase\":\"decode\",\"batch\":1024,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":277.4,\"pass_time_ms\":101.4,\"tokens_per_s\":10100.0,\"share\":{\"linear\":0.03603,\"attention\":0.9523,\"elementwise\":0.005868,\"overhead\":0.005768},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":274.9},{\"phase\":\"decode\",\"batch\":1,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":3.545,\"pass_time_ms\":1.831,\"tokens_per_s\":546.1,\"share\":{\"linear\":0.4743,\"attention\":0.2059,\"elementwise\":0.0003433,\"overhead\":0.3195},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.074},{\"phase\":\"decode\",\"batch\":4,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":6.767,\"pass_time_ms\":2.966,\"tokens_per_s\":1349.0,\"share\":{\"linear\":0.2933,\"attention\":0.5086,\"elementwise\":0.0007997,\"overhead\":0.1972},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.295},{\"phase\":\"decode\",\"batch\":16,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":19.65,\"pass_time_ms\":7.505,\"tokens_per_s\":2132.0,\"share\":{\"linear\":0.1168,\"attention\":0.804,\"elementwise\":0.001245,\"overhead\":0.07795},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":17.18},{\"phase\":\"decode\",\"batch\":64,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":71.19,\"pass_time_ms\":25.66,\"tokens_per_s\":2494.0,\"share\":{\"linear\":0.03511,\"attention\":0.9406,\"elementwise\":0.001451,\"overhead\":0.0228},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":68.72},{\"phase\":\"decode\",\"batch\":256,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":277.4,\"pass_time_ms\":98.28,\"tokens_per_s\":2605.0,\"share\":{\"linear\":0.01018,\"attention\":0.9824,\"elementwise\":0.001514,\"overhead\":0.005952},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":274.9},{\"phase\":\"decode\",\"batch\":1024,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":1102.0,\"pass_time_ms\":391.0,\"tokens_per_s\":2619.0,\"share\":{\"linear\":0.009345,\"attention\":0.9876,\"elementwise\":0.001522,\"overhead\":0.001496},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":1100.0}]}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "batches": [
+     1,
+     4,
+     16,
+     64,
+     256,
+     1024
+    ],
+    "contexts": [
+     512,
+     2048,
+     8192,
+     32768
+    ]
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"points\":[{\"phase\":\"decode\",\"batch\":1,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":16.13,\"pass_time_ms\":6.46,\"tokens_per_s\":154.8,\"share\":{\"linear\":0.8162,\"attention\":0.003684,\"elementwise\":0.0003656,\"overhead\":0.1797},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.06737},{\"phase\":\"decode\",\"batch\":4,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":16.33,\"pass_time_ms\":6.543,\"tokens_per_s\":611.4,\"share\":{\"linear\":0.8066,\"attention\":0.01455,\"elementwise\":0.001358,\"overhead\":0.1774},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.2695},{\"phase\":\"decode\",\"batch\":16,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":17.14,\"pass_time_ms\":6.874,\"tokens_per_s\":2327.0,\"share\":{\"linear\":0.7706,\"attention\":0.05539,\"elementwise\":0.005089,\"overhead\":0.1689},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":1.078},{\"phase\":\"decode\",\"batch\":64,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":20.36,\"pass_time_ms\":8.201,\"tokens_per_s\":7804.0,\"share\":{\"linear\":0.6557,\"attention\":0.1857,\"elementwise\":0.017,\"overhead\":0.1416},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":4.312},{\"phase\":\"decode\",\"batch\":256,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":33.27,\"pass_time_ms\":13.51,\"tokens_per_s\":18950.0,\"share\":{\"linear\":0.4217,\"attention\":0.4511,\"elementwise\":0.04124,\"overhead\":0.08596},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":17.25},{\"phase\":\"decode\",\"batch\":1024,\"context\":512,\"fits_in_memory\":false,\"memory_needed_gb\":84.91,\"pass_time_ms\":49.95,\"tokens_per_s\":20500.0,\"share\":{\"linear\":0.4443,\"attention\":0.4879,\"elementwise\":0.04459,\"overhead\":0.02324},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":68.99},{\"phase\":\"decode\",\"batch\":1,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":16.33,\"pass_time_ms\":6.531,\"tokens_per_s\":153.1,\"share\":{\"linear\":0.8074,\"attention\":0.01447,\"elementwise\":0.0003617,\"overhead\":0.1778},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.2687},{\"phase\":\"decode\",\"batch\":4,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":17.13,\"pass_time_ms\":6.826,\"tokens_per_s\":586.0,\"share\":{\"linear\":0.7732,\"attention\":0.05538,\"elementwise\":0.001302,\"overhead\":0.1701},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":1.075},{\"phase\":\"decode\",\"batch\":16,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":20.36,\"pass_time_ms\":8.006,\"tokens_per_s\":1999.0,\"share\":{\"linear\":0.6617,\"attention\":0.1889,\"elementwise\":0.00437,\"overhead\":0.145},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":4.299},{\"phase\":\"decode\",\"batch\":64,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":33.25,\"pass_time_ms\":12.73,\"tokens_per_s\":5029.0,\"share\":{\"linear\":0.4225,\"attention\":0.4753,\"elementwise\":0.01095,\"overhead\":0.09123},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":17.2},{\"phase\":\"decode\",\"batch\":256,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":84.81,\"pass_time_ms\":31.61,\"tokens_per_s\":8100.0,\"share\":{\"linear\":0.1802,\"attention\":0.7654,\"elementwise\":0.01762,\"overhead\":0.03673},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":68.79},{\"phase\":\"decode\",\"batch\":1024,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":291.1,\"pass_time_ms\":122.3,\"tokens_per_s\":8370.0,\"share\":{\"linear\":0.1814,\"attention\":0.7909,\"elementwise\":0.0182,\"overhead\":0.009489},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":275.1},{\"phase\":\"decode\",\"batch\":1,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":17.13,\"pass_time_ms\":6.813,\"tokens_per_s\":146.8,\"share\":{\"linear\":0.7739,\"attention\":0.05538,\"elementwise\":0.0003467,\"overhead\":0.1704},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":1.074},{\"phase\":\"decode\",\"batch\":4,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":20.36,\"pass_time_ms\":7.957,\"tokens_per_s\":502.7,\"share\":{\"linear\":0.6633,\"attention\":0.1897,\"elementwise\":0.001117,\"overhead\":0.1459},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":4.296},{\"phase\":\"decode\",\"batch\":16,\"context\":8192,\"fits_in_memory\":true,\"memory_needed_gb\":33.24,\"pass_time_ms\":12.53,\"tokens_per_s\":1277.0,\"share\":{\"linear\":0.4228,\"attention\":0.4818,\"elementwise\":0.002792,\"overhead\":0.09265},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":17.18},{\"phase\":\"decode\",\"batch\":64,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":84.79,\"pass_time_ms\":30.83,\"tokens_per_s\":2076.0,\"share\":{\"linear\":0.1744,\"attention\":0.7834,\"elementwise\":0.004522,\"overhead\":0.03766},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":68.74},{\"phase\":\"decode\",\"batch\":256,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":291.0,\"pass_time_ms\":104.0,\"tokens_per_s\":2461.0,\"share\":{\"linear\":0.05476,\"attention\":0.9287,\"elementwise\":0.005355,\"overhead\":0.01116},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":274.9},{\"phase\":\"decode\",\"batch\":1024,\"context\":8192,\"fits_in_memory\":false,\"memory_needed_gb\":1116.0,\"pass_time_ms\":411.9,\"tokens_per_s\":2486.0,\"share\":{\"linear\":0.05387,\"attention\":0.9379,\"elementwise\":0.005407,\"overhead\":0.002818},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":1100.0},{\"phase\":\"decode\",\"batch\":1,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":20.36,\"pass_time_ms\":7.945,\"tokens_per_s\":125.9,\"share\":{\"linear\":0.6637,\"attention\":0.1899,\"elementwise\":0.0002973,\"overhead\":0.1461},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":4.295},{\"phase\":\"decode\",\"batch\":4,\"context\":32768,\"fits_in_memory\":true,\"memory_needed_gb\":33.24,\"pass_time_ms\":12.48,\"tokens_per_s\":320.5,\"share\":{\"linear\":0.4228,\"attention\":0.4834,\"elementwise\":0.000712,\"overhead\":0.09302},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":17.18},{\"phase\":\"decode\",\"batch\":16,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":84.78,\"pass_time_ms\":30.63,\"tokens_per_s\":522.4,\"share\":{\"linear\":0.173,\"attention\":0.788,\"elementwise\":0.001142,\"overhead\":0.0379},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":68.72},{\"phase\":\"decode\",\"batch\":64,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":290.9,\"pass_time_ms\":103.2,\"tokens_per_s\":620.0,\"share\":{\"linear\":0.05209,\"attention\":0.9353,\"elementwise\":0.00135,\"overhead\":0.01125},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":274.9},{\"phase\":\"decode\",\"batch\":256,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":1116.0,\"pass_time_ms\":393.6,\"tokens_per_s\":650.4,\"share\":{\"linear\":0.01447,\"attention\":0.9812,\"elementwise\":0.001415,\"overhead\":0.00295},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":1100.0},{\"phase\":\"decode\",\"batch\":1024,\"context\":32768,\"fits_in_memory\":false,\"memory_needed_gb\":4414.0,\"pass_time_ms\":1570.0,\"tokens_per_s\":652.1,\"share\":{\"linear\":0.01413,\"attention\":0.9837,\"elementwise\":0.001418,\"overhead\":0.0007393},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":4398.0}]}",
+   "seconds": 0.005
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "linear_compute_bound",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":64,\"before\":{\"phase\":\"decode\",\"batch\":63,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":5.108,\"pass_time_ms\":29.99,\"tokens_per_s\":2101.0,\"share\":{\"linear\":0.49,\"attention\":0.4089,\"elementwise\":0.01541,\"overhead\":0.08568},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.909},\"at\":{\"phase\":\"decode\",\"batch\":64,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":5.154,\"pass_time_ms\":30.3,\"tokens_per_s\":2112.0,\"share\":{\"linear\":0.4889,\"attention\":0.4108,\"elementwise\":0.01549,\"overhead\":0.0848},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.956}}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "linear_compute_bound",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":64,\"before\":{\"phase\":\"decode\",\"batch\":63,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":6.702,\"pass_time_ms\":36.41,\"tokens_per_s\":1730.0,\"share\":{\"linear\":0.481,\"attention\":0.4563,\"elementwise\":0.01115,\"overhead\":0.05154},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.232},\"at\":{\"phase\":\"decode\",\"batch\":64,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":6.769,\"pass_time_ms\":36.82,\"tokens_per_s\":1738.0,\"share\":{\"linear\":0.4796,\"attention\":0.4582,\"elementwise\":0.01121,\"overhead\":0.05097},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.299}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "linear_compute_bound",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":291,\"before\":{\"phase\":\"decode\",\"batch\":290,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":15.59,\"pass_time_ms\":6.59,\"tokens_per_s\":44010.0,\"share\":{\"linear\":0.1331,\"attention\":0.7162,\"elementwise\":0.02916,\"overhead\":0.1215},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":13.39},\"at\":{\"phase\":\"decode\",\"batch\":291,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":15.63,\"pass_time_ms\":6.609,\"tokens_per_s\":44030.0,\"share\":{\"linear\":0.1331,\"attention\":0.7165,\"elementwise\":0.02917,\"overhead\":0.1212},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":13.44}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "linear_compute_bound",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":285,\"before\":{\"phase\":\"decode\",\"batch\":284,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":21.54,\"pass_time_ms\":8.484,\"tokens_per_s\":33480.0,\"share\":{\"linear\":0.1207,\"attention\":0.7909,\"elementwise\":0.01946,\"overhead\":0.06895},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":19.08},\"at\":{\"phase\":\"decode\",\"batch\":285,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":21.61,\"pass_time_ms\":8.511,\"tokens_per_s\":33490.0,\"share\":{\"linear\":0.1206,\"attention\":0.7912,\"elementwise\":0.01947,\"overhead\":0.06874},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":19.14}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "linear_compute_bound",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":264,\"before\":{\"phase\":\"decode\",\"batch\":263,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":86.69,\"pass_time_ms\":32.32,\"tokens_per_s\":8137.0,\"share\":{\"linear\":0.1774,\"attention\":0.769,\"elementwise\":0.0177,\"overhead\":0.03592},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":70.67},\"at\":{\"phase\":\"decode\",\"batch\":264,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":86.96,\"pass_time_ms\":32.43,\"tokens_per_s\":8140.0,\"share\":{\"linear\":0.1773,\"attention\":0.7692,\"elementwise\":0.01771,\"overhead\":0.0358},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":70.94}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":101,\"before\":{\"phase\":\"decode\",\"batch\":100,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":6.816,\"pass_time_ms\":41.66,\"tokens_per_s\":2400.0,\"share\":{\"linear\":0.461,\"attention\":0.4597,\"elementwise\":0.0176,\"overhead\":0.06168},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":4.618},\"at\":{\"phase\":\"decode\",\"batch\":101,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":6.862,\"pass_time_ms\":41.97,\"tokens_per_s\":2406.0,\"share\":{\"linear\":0.4605,\"attention\":0.4606,\"elementwise\":0.01764,\"overhead\":0.06122},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":4.664}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":71,\"before\":{\"phase\":\"decode\",\"batch\":70,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":7.172,\"pass_time_ms\":39.27,\"tokens_per_s\":1783.0,\"share\":{\"linear\":0.4717,\"attention\":0.469,\"elementwise\":0.01149,\"overhead\":0.04779},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.702},\"at\":{\"phase\":\"decode\",\"batch\":71,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":7.239,\"pass_time_ms\":39.68,\"tokens_per_s\":1789.0,\"share\":{\"linear\":0.4705,\"attention\":0.4706,\"elementwise\":0.01153,\"overhead\":0.0473},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.769}}",
+   "seconds": 0.0
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":47,\"before\":{\"phase\":\"decode\",\"batch\":46,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":4.323,\"pass_time_ms\":2.329,\"tokens_per_s\":19750.0,\"share\":{\"linear\":0.3215,\"attention\":0.3214,\"elementwise\":0.01311,\"overhead\":0.3439},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.124},\"at\":{\"phase\":\"decode\",\"batch\":47,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":4.37,\"pass_time_ms\":2.346,\"tokens_per_s\":20030.0,\"share\":{\"linear\":0.3193,\"attention\":0.326,\"elementwise\":0.0133,\"overhead\":0.3414},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.171}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":38,\"before\":{\"phase\":\"decode\",\"batch\":37,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":4.956,\"pass_time_ms\":2.368,\"tokens_per_s\":15630.0,\"share\":{\"linear\":0.3747,\"attention\":0.3692,\"elementwise\":0.009101,\"overhead\":0.2471},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":2.485},\"at\":{\"phase\":\"decode\",\"batch\":38,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":5.023,\"pass_time_ms\":2.392,\"tokens_per_s\":15880.0,\"share\":{\"linear\":0.371,\"attention\":0.3752,\"elementwise\":0.00925,\"overhead\":0.2445},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":2.553}}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":57,\"before\":{\"phase\":\"decode\",\"batch\":56,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":31.1,\"pass_time_ms\":11.94,\"tokens_per_s\":4691.0,\"share\":{\"linear\":0.4493,\"attention\":0.4433,\"elementwise\":0.01022,\"overhead\":0.09724},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":15.05},\"at\":{\"phase\":\"decode\",\"batch\":57,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":31.37,\"pass_time_ms\":12.04,\"tokens_per_s\":4735.0,\"share\":{\"linear\":0.4457,\"attention\":0.4475,\"elementwise\":0.01031,\"overhead\":0.09645},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":15.32}}",
+   "seconds": 0.0
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":21548,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":21547,\"fits_in_memory\":true,\"memory_needed_gb\":2.686,\"pass_time_ms\":17.88,\"tokens_per_s\":55.91,\"share\":{\"linear\":0.4279,\"attention\":0.4279,\"elementwise\":0.000447,\"overhead\":0.1437},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.4855},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":21548,\"fits_in_memory\":true,\"memory_needed_gb\":2.686,\"pass_time_ms\":17.89,\"tokens_per_s\":55.91,\"share\":{\"linear\":0.4279,\"attention\":0.4279,\"elementwise\":0.000447,\"overhead\":0.1437},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.4855}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":28736,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":28735,\"fits_in_memory\":true,\"memory_needed_gb\":3.413,\"pass_time_ms\":20.17,\"tokens_per_s\":49.58,\"share\":{\"linear\":0.4533,\"attention\":0.4533,\"elementwise\":0.0003436,\"overhead\":0.09305},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.9417},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":28736,\"fits_in_memory\":true,\"memory_needed_gb\":3.413,\"pass_time_ms\":20.17,\"tokens_per_s\":49.58,\"share\":{\"linear\":0.4533,\"attention\":0.4533,\"elementwise\":0.0003436,\"overhead\":0.09305},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.9417}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":91887,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":91886,\"fits_in_memory\":true,\"memory_needed_gb\":4.27,\"pass_time_ms\":2.256,\"tokens_per_s\":443.3,\"share\":{\"linear\":0.3223,\"attention\":0.3223,\"elementwise\":0.0003223,\"overhead\":0.3551},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.07},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":91887,\"fits_in_memory\":true,\"memory_needed_gb\":4.27,\"pass_time_ms\":2.256,\"tokens_per_s\":443.3,\"share\":{\"linear\":0.3223,\"attention\":0.3223,\"elementwise\":0.0003223,\"overhead\":0.3551},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.07}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":75464,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":75463,\"fits_in_memory\":true,\"memory_needed_gb\":4.944,\"pass_time_ms\":2.323,\"tokens_per_s\":430.6,\"share\":{\"linear\":0.3739,\"attention\":0.3739,\"elementwise\":0.0002707,\"overhead\":0.2519},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":2.473},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":75464,\"fits_in_memory\":true,\"memory_needed_gb\":4.944,\"pass_time_ms\":2.323,\"tokens_per_s\":430.6,\"share\":{\"linear\":0.3739,\"attention\":0.3739,\"elementwise\":0.0002707,\"overhead\":0.2519},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":2.473}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":114544,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":114543,\"fits_in_memory\":true,\"memory_needed_gb\":31.07,\"pass_time_ms\":11.71,\"tokens_per_s\":85.41,\"share\":{\"linear\":0.4503,\"attention\":0.4503,\"elementwise\":0.0002017,\"overhead\":0.09916},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":15.01},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":114544,\"fits_in_memory\":true,\"memory_needed_gb\":31.07,\"pass_time_ms\":11.71,\"tokens_per_s\":85.41,\"share\":{\"linear\":0.4503,\"attention\":0.4503,\"elementwise\":0.0002017,\"overhead\":0.09916},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":15.01}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":265,\"before\":{\"phase\":\"decode\",\"batch\":264,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":14.39,\"pass_time_ms\":93.85,\"tokens_per_s\":2813.0,\"share\":{\"linear\":0.4228,\"attention\":0.5292,\"elementwise\":0.02061,\"overhead\":0.02738},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":12.19},\"at\":{\"phase\":\"decode\",\"batch\":265,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":14.43,\"pass_time_ms\":94.17,\"tokens_per_s\":2814.0,\"share\":{\"linear\":0.4227,\"attention\":0.5294,\"elementwise\":0.02062,\"overhead\":0.02729},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":12.24}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":178,\"before\":{\"phase\":\"decode\",\"batch\":177,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":14.36,\"pass_time_ms\":83.25,\"tokens_per_s\":2126.0,\"share\":{\"linear\":0.4116,\"attention\":0.5521,\"elementwise\":0.0137,\"overhead\":0.02254},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":11.89},\"at\":{\"phase\":\"decode\",\"batch\":178,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":14.42,\"pass_time_ms\":83.66,\"tokens_per_s\":2128.0,\"share\":{\"linear\":0.4114,\"attention\":0.5525,\"elementwise\":0.01371,\"overhead\":0.02243},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":11.96}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":1513,\"before\":{\"phase\":\"decode\",\"batch\":1512,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":71.99,\"pass_time_ms\":30.93,\"tokens_per_s\":48890.0,\"share\":{\"linear\":0.146,\"attention\":0.7957,\"elementwise\":0.03239,\"overhead\":0.0259},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":69.83},\"at\":{\"phase\":\"decode\",\"batch\":1513,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":72.04,\"pass_time_ms\":30.95,\"tokens_per_s\":48890.0,\"share\":{\"linear\":0.146,\"attention\":0.7957,\"elementwise\":0.03239,\"overhead\":0.02588},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":69.87}}",
+   "seconds": 0.005
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":1036,\"before\":{\"phase\":\"decode\",\"batch\":1035,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":71.96,\"pass_time_ms\":29.33,\"tokens_per_s\":35290.0,\"share\":{\"linear\":0.1259,\"attention\":0.8336,\"elementwise\":0.02051,\"overhead\":0.01994},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":69.53},\"at\":{\"phase\":\"decode\",\"batch\":1036,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":72.03,\"pass_time_ms\":29.36,\"tokens_per_s\":35290.0,\"share\":{\"linear\":0.1259,\"attention\":0.8336,\"elementwise\":0.02051,\"overhead\":0.01993},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":69.59}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":209,\"before\":{\"phase\":\"decode\",\"batch\":208,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":71.92,\"pass_time_ms\":26.89,\"tokens_per_s\":7736.0,\"share\":{\"linear\":0.2089,\"attention\":0.7311,\"elementwise\":0.01683,\"overhead\":0.04318},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":55.89},\"at\":{\"phase\":\"decode\",\"batch\":209,\"context\":2048,\"fits_in_memory\":false,\"memory_needed_gb\":72.19,\"pass_time_ms\":26.98,\"tokens_per_s\":7745.0,\"share\":{\"linear\":0.2082,\"attention\":0.7319,\"elementwise\":0.01685,\"overhead\":0.04303},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":56.16}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":541544,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":541543,\"fits_in_memory\":true,\"memory_needed_gb\":14.4,\"pass_time_ms\":202.5,\"tokens_per_s\":4.938,\"share\":{\"linear\":0.03779,\"attention\":0.9495,\"elementwise\":3.948e-05,\"overhead\":0.01269},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":12.2},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":541544,\"fits_in_memory\":false,\"memory_needed_gb\":14.4,\"pass_time_ms\":202.5,\"tokens_per_s\":4.938,\"share\":{\"linear\":0.03779,\"attention\":0.9495,\"elementwise\":3.948e-05,\"overhead\":0.01269},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":12.2}}",
+   "seconds": 0.005
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":364025,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":364024,\"fits_in_memory\":true,\"memory_needed_gb\":14.4,\"pass_time_ms\":126.8,\"tokens_per_s\":7.885,\"share\":{\"linear\":0.07209,\"attention\":0.9131,\"elementwise\":5.464e-05,\"overhead\":0.0148},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":11.93},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":364025,\"fits_in_memory\":false,\"memory_needed_gb\":14.4,\"pass_time_ms\":126.8,\"tokens_per_s\":7.885,\"share\":{\"linear\":0.07209,\"attention\":0.9131,\"elementwise\":5.464e-05,\"overhead\":0.0148},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":11.93}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"context\",\"fixed\":1,\"result\":\"never true up to 1048576\",\"value\":null,\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":1048576,\"fits_in_memory\":true,\"memory_needed_gb\":25.82,\"pass_time_ms\":9.825,\"tokens_per_s\":101.8,\"share\":{\"linear\":0.074,\"attention\":0.8444,\"elementwise\":7.401e-05,\"overhead\":0.08153},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":23.62}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"context\",\"fixed\":1,\"result\":\"never true up to 1048576\",\"value\":null,\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":1048576,\"fits_in_memory\":true,\"memory_needed_gb\":36.83,\"pass_time_ms\":13.52,\"tokens_per_s\":73.96,\"share\":{\"linear\":0.06423,\"attention\":0.8925,\"elementwise\":4.649e-05,\"overhead\":0.04327},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":34.36}}",
+   "seconds": 0.006
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":426784,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":426783,\"fits_in_memory\":true,\"memory_needed_gb\":72.0,\"pass_time_ms\":26.08,\"tokens_per_s\":38.34,\"share\":{\"linear\":0.2022,\"attention\":0.7532,\"elementwise\":9.056e-05,\"overhead\":0.04451},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":55.94},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":426784,\"fits_in_memory\":false,\"memory_needed_gb\":72.0,\"pass_time_ms\":26.08,\"tokens_per_s\":38.34,\"share\":{\"linear\":0.2022,\"attention\":0.7532,\"elementwise\":9.056e-05,\"overhead\":0.04451},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":55.94}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "exceeds_memory",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"exceeds_memory\",\"description\":\"weights + KV cache no longer fit in GPU memory\",\"axis\":\"context\",\"fixed\":1,\"result\":\"already true at the smallest value\",\"value\":1,\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":1,\"fits_in_memory\":false,\"memory_needed_gb\":16.06,\"pass_time_ms\":59.27,\"tokens_per_s\":16.87,\"share\":{\"linear\":0.9366,\"attention\":0.0001274,\"elementwise\":0.0004389,\"overhead\":0.06284},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.0003932}}",
+   "seconds": 0.0
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "overhead_below_10pct",
+    "axis": "batch",
+    "fixed": 512,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"overhead_below_10pct\",\"description\":\"kernel launch overhead falls below 10% of pass time\",\"axis\":\"batch\",\"fixed\":512,\"result\":\"found\",\"value\":928,\"before\":{\"phase\":\"decode\",\"batch\":927,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":12.91,\"pass_time_ms\":8.005,\"tokens_per_s\":115800.0,\"share\":{\"linear\":0.3459,\"attention\":0.4773,\"elementwise\":0.07671,\"overhead\":0.1001},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":10.73},\"at\":{\"phase\":\"decode\",\"batch\":928,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":12.92,\"pass_time_ms\":8.013,\"tokens_per_s\":115800.0,\"share\":{\"linear\":0.3459,\"attention\":0.4774,\"elementwise\":0.07672,\"overhead\":0.09996},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":10.75}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "overhead_below_10pct",
+    "axis": "batch",
+    "fixed": 512,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"overhead_below_10pct\",\"description\":\"kernel launch overhead falls below 10% of pass time\",\"axis\":\"batch\",\"fixed\":512,\"result\":\"found\",\"value\":522,\"before\":{\"phase\":\"decode\",\"batch\":521,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":11.23,\"pass_time_ms\":5.847,\"tokens_per_s\":89110.0,\"share\":{\"linear\":0.318,\"attention\":0.5302,\"elementwise\":0.05179,\"overhead\":0.1001},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":8.775},\"at\":{\"phase\":\"decode\",\"batch\":522,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":11.25,\"pass_time_ms\":5.857,\"tokens_per_s\":89130.0,\"share\":{\"linear\":0.3181,\"attention\":0.5303,\"elementwise\":0.0518,\"overhead\":0.09988},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":8.792}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "overhead_below_10pct",
+    "axis": "batch",
+    "fixed": 512,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"overhead_below_10pct\",\"description\":\"kernel launch overhead falls below 10% of pass time\",\"axis\":\"batch\",\"fixed\":512,\"result\":\"found\",\"value\":188,\"before\":{\"phase\":\"decode\",\"batch\":187,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":28.63,\"pass_time_ms\":11.6,\"tokens_per_s\":16120.0,\"share\":{\"linear\":0.4812,\"attention\":0.3837,\"elementwise\":0.03508,\"overhead\":0.1001},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":12.6},\"at\":{\"phase\":\"decode\",\"batch\":188,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":28.7,\"pass_time_ms\":11.63,\"tokens_per_s\":16170.0,\"share\":{\"linear\":0.4802,\"attention\":0.3848,\"elementwise\":0.03518,\"overhead\":0.09986},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":12.67}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "overhead_below_10pct",
+    "axis": "batch",
+    "fixed": 512,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"overhead_below_10pct\",\"description\":\"kernel launch overhead falls below 10% of pass time\",\"axis\":\"batch\",\"fixed\":512,\"result\":\"found\",\"value\":91,\"before\":{\"phase\":\"decode\",\"batch\":90,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":3.24,\"pass_time_ms\":25.58,\"tokens_per_s\":3518.0,\"share\":{\"linear\":0.7028,\"attention\":0.171,\"elementwise\":0.0258,\"overhead\":0.1004},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":1.042},\"at\":{\"phase\":\"decode\",\"batch\":91,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":3.252,\"pass_time_ms\":25.76,\"tokens_per_s\":3533.0,\"share\":{\"linear\":0.7027,\"attention\":0.1716,\"elementwise\":0.0259,\"overhead\":0.09975},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":1.054}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "event": "overhead_below_10pct",
+    "axis": "batch",
+    "fixed": 512,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"event\":\"overhead_below_10pct\",\"description\":\"kernel launch overhead falls below 10% of pass time\",\"axis\":\"batch\",\"fixed\":512,\"result\":\"found\",\"value\":39,\"before\":{\"phase\":\"decode\",\"batch\":38,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":3.11,\"pass_time_ms\":18.65,\"tokens_per_s\":2037.0,\"share\":{\"linear\":0.7489,\"attention\":0.1374,\"elementwise\":0.01314,\"overhead\":0.1006},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.64},\"at\":{\"phase\":\"decode\",\"batch\":39,\"context\":512,\"fits_in_memory\":true,\"memory_needed_gb\":3.127,\"pass_time_ms\":18.87,\"tokens_per_s\":2067.0,\"share\":{\"linear\":0.7479,\"attention\":0.1393,\"elementwise\":0.01334,\"overhead\":0.09948},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.6569}}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "prefill",
+    "batches": [
+     1
+    ],
+    "contexts": [
+     16,
+     64,
+     256,
+     1024,
+     4096,
+     16384,
+     65536
+    ]
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"prefill\",\"points\":[{\"phase\":\"prefill\",\"batch\":1,\"context\":16,\"fits_in_memory\":true,\"memory_needed_gb\":2.2,\"pass_time_ms\":11.8,\"tokens_per_s\":1356.0,\"share\":{\"linear\":0.771,\"attention\":0.001299,\"elementwise\":0.009989,\"overhead\":0.2178},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.0007209},{\"phase\":\"prefill\",\"batch\":1,\"context\":64,\"fits_in_memory\":true,\"memory_needed_gb\":2.202,\"pass_time_ms\":17.47,\"tokens_per_s\":3663.0,\"share\":{\"linear\":0.8221,\"attention\":0.003928,\"elementwise\":0.02687,\"overhead\":0.1471},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.002884},{\"phase\":\"prefill\",\"batch\":1,\"context\":256,\"fits_in_memory\":true,\"memory_needed_gb\":2.206,\"pass_time_ms\":41.69,\"tokens_per_s\":6141.0,\"share\":{\"linear\":0.8808,\"attention\":0.01251,\"elementwise\":0.045,\"overhead\":0.06164},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.01153},{\"phase\":\"prefill\",\"batch\":1,\"context\":1024,\"fits_in_memory\":true,\"memory_needed_gb\":2.223,\"pass_time_ms\":144.3,\"tokens_per_s\":7096.0,\"share\":{\"linear\":0.8863,\"attention\":0.04389,\"elementwise\":0.05198,\"overhead\":0.01781},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.04614},{\"phase\":\"prefill\",\"batch\":1,\"context\":4096,\"fits_in_memory\":true,\"memory_needed_gb\":2.292,\"pass_time_ms\":621.0,\"tokens_per_s\":6596.0,\"share\":{\"linear\":0.7956,\"attention\":0.1519,\"elementwise\":0.04832,\"overhead\":0.004138},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1845},{\"phase\":\"prefill\",\"batch\":1,\"context\":16384,\"fits_in_memory\":true,\"memory_needed_gb\":2.569,\"pass_time_ms\":3567.0,\"tokens_per_s\":4593.0,\"share\":{\"linear\":0.5493,\"attention\":0.4164,\"elementwise\":0.03365,\"overhead\":0.0007203},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7382},{\"phase\":\"prefill\",\"batch\":1,\"context\":65536,\"fits_in_memory\":true,\"memory_needed_gb\":3.676,\"pass_time_ms\":31980.0,\"tokens_per_s\":2049.0,\"share\":{\"linear\":0.2445,\"attention\":0.7404,\"elementwise\":0.01501,\"overhead\":8.034e-05},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.953}]}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "prefill",
+    "batches": [
+     1
+    ],
+    "contexts": [
+     16,
+     64,
+     256,
+     1024,
+     4096,
+     16384,
+     65536
+    ]
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"prefill\",\"points\":[{\"phase\":\"prefill\",\"batch\":1,\"context\":16,\"fits_in_memory\":true,\"memory_needed_gb\":2.472,\"pass_time_ms\":12.58,\"tokens_per_s\":1272.0,\"share\":{\"linear\":0.8417,\"attention\":0.0009012,\"elementwise\":0.008229,\"overhead\":0.1492},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.001049},{\"phase\":\"prefill\",\"batch\":1,\"context\":64,\"fits_in_memory\":true,\"memory_needed_gb\":2.474,\"pass_time_ms\":18.2,\"tokens_per_s\":3516.0,\"share\":{\"linear\":0.8713,\"attention\":0.002905,\"elementwise\":0.02267,\"overhead\":0.1031},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.004194},{\"phase\":\"prefill\",\"batch\":1,\"context\":256,\"fits_in_memory\":true,\"memory_needed_gb\":2.48,\"pass_time_ms\":42.17,\"tokens_per_s\":6070.0,\"share\":{\"linear\":0.9071,\"attention\":0.009308,\"elementwise\":0.0391,\"overhead\":0.0445},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.01678},{\"phase\":\"prefill\",\"batch\":1,\"context\":1024,\"fits_in_memory\":true,\"memory_needed_gb\":2.505,\"pass_time_ms\":142.8,\"tokens_per_s\":7173.0,\"share\":{\"linear\":0.9081,\"attention\":0.03261,\"elementwise\":0.04619,\"overhead\":0.01315},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.06711},{\"phase\":\"prefill\",\"batch\":1,\"context\":4096,\"fits_in_memory\":true,\"memory_needed_gb\":2.606,\"pass_time_ms\":593.6,\"tokens_per_s\":6900.0,\"share\":{\"linear\":0.8365,\"attention\":0.1159,\"elementwise\":0.04443,\"overhead\":0.003162},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2684},{\"phase\":\"prefill\",\"batch\":1,\"context\":16384,\"fits_in_memory\":true,\"memory_needed_gb\":3.008,\"pass_time_ms\":3153.0,\"tokens_per_s\":5196.0,\"share\":{\"linear\":0.6232,\"attention\":0.3427,\"elementwise\":0.03346,\"overhead\":0.0005952},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.074},{\"phase\":\"prefill\",\"batch\":1,\"context\":65536,\"fits_in_memory\":true,\"memory_needed_gb\":4.619,\"pass_time_ms\":25490.0,\"tokens_per_s\":2571.0,\"share\":{\"linear\":0.3076,\"attention\":0.6758,\"elementwise\":0.01656,\"overhead\":7.363e-05},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.295}]}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "batches": [
+     1
+    ],
+    "contexts": [
+     16,
+     64,
+     256,
+     1024,
+     4096,
+     16384,
+     65536
+    ]
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"points\":[{\"phase\":\"prefill\",\"batch\":1,\"context\":16,\"fits_in_memory\":true,\"memory_needed_gb\":2.2,\"pass_time_ms\":1.547,\"tokens_per_s\":10340.0,\"share\":{\"linear\":0.4745,\"attention\":0.0007366,\"elementwise\":0.006894,\"overhead\":0.5179},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.0007209},{\"phase\":\"prefill\",\"batch\":1,\"context\":64,\"fits_in_memory\":true,\"memory_needed_gb\":2.202,\"pass_time_ms\":1.604,\"tokens_per_s\":39900.0,\"share\":{\"linear\":0.4713,\"attention\":0.002841,\"elementwise\":0.02647,\"overhead\":0.4994},\"dominant\":\"overhead\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.002884},{\"phase\":\"prefill\",\"batch\":1,\"context\":256,\"fits_in_memory\":true,\"memory_needed_gb\":2.206,\"pass_time_ms\":1.833,\"tokens_per_s\":139700.0,\"share\":{\"linear\":0.4605,\"attention\":0.009945,\"elementwise\":0.09255,\"overhead\":0.437},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.01153},{\"phase\":\"prefill\",\"batch\":1,\"context\":1024,\"fits_in_memory\":true,\"memory_needed_gb\":2.223,\"pass_time_ms\":4.53,\"tokens_per_s\":226100.0,\"share\":{\"linear\":0.6427,\"attention\":0.03074,\"elementwise\":0.1498,\"overhead\":0.1768},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.04614},{\"phase\":\"prefill\",\"batch\":1,\"context\":4096,\"fits_in_memory\":true,\"memory_needed_gb\":2.292,\"pass_time_ms\":17.25,\"tokens_per_s\":237500.0,\"share\":{\"linear\":0.6672,\"attention\":0.1291,\"elementwise\":0.1573,\"overhead\":0.04644},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.1845},{\"phase\":\"prefill\",\"batch\":1,\"context\":16384,\"fits_in_memory\":true,\"memory_needed_gb\":2.569,\"pass_time_ms\":93.15,\"tokens_per_s\":175900.0,\"share\":{\"linear\":0.4926,\"attention\":0.3823,\"elementwise\":0.1165,\"overhead\":0.008599},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.7382},{\"phase\":\"prefill\",\"batch\":1,\"context\":65536,\"fits_in_memory\":true,\"memory_needed_gb\":3.676,\"pass_time_ms\":797.4,\"tokens_per_s\":82190.0,\"share\":{\"linear\":0.23,\"attention\":0.7145,\"elementwise\":0.05444,\"overhead\":0.001005},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.953}]}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "batches": [
+     1
+    ],
+    "contexts": [
+     16,
+     64,
+     256,
+     1024,
+     4096,
+     16384,
+     65536
+    ]
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"points\":[{\"phase\":\"prefill\",\"batch\":1,\"context\":16,\"fits_in_memory\":true,\"memory_needed_gb\":2.472,\"pass_time_ms\":1.47,\"tokens_per_s\":10880.0,\"share\":{\"linear\":0.5951,\"attention\":0.0006262,\"elementwise\":0.006357,\"overhead\":0.3979},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.001049},{\"phase\":\"prefill\",\"batch\":1,\"context\":64,\"fits_in_memory\":true,\"memory_needed_gb\":2.474,\"pass_time_ms\":1.521,\"tokens_per_s\":42070.0,\"share\":{\"linear\":0.5885,\"attention\":0.002421,\"elementwise\":0.02448,\"overhead\":0.3846},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.004194},{\"phase\":\"prefill\",\"batch\":1,\"context\":256,\"fits_in_memory\":true,\"memory_needed_gb\":2.48,\"pass_time_ms\":1.726,\"tokens_per_s\":148400.0,\"share\":{\"linear\":0.5662,\"attention\":0.008536,\"elementwise\":0.08624,\"overhead\":0.339},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.01678},{\"phase\":\"prefill\",\"batch\":1,\"context\":1024,\"fits_in_memory\":true,\"memory_needed_gb\":2.505,\"pass_time_ms\":4.343,\"tokens_per_s\":235800.0,\"share\":{\"linear\":0.705,\"attention\":0.02331,\"elementwise\":0.137,\"overhead\":0.1347},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.06711},{\"phase\":\"prefill\",\"batch\":1,\"context\":4096,\"fits_in_memory\":true,\"memory_needed_gb\":2.606,\"pass_time_ms\":16.28,\"tokens_per_s\":251600.0,\"share\":{\"linear\":0.7184,\"attention\":0.09945,\"elementwise\":0.1462,\"overhead\":0.03594},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.2684},{\"phase\":\"prefill\",\"batch\":1,\"context\":16384,\"fits_in_memory\":true,\"memory_needed_gb\":3.008,\"pass_time_ms\":82.23,\"tokens_per_s\":199200.0,\"share\":{\"linear\":0.5621,\"attention\":0.315,\"elementwise\":0.1158,\"overhead\":0.007114},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.074},{\"phase\":\"prefill\",\"batch\":1,\"context\":65536,\"fits_in_memory\":true,\"memory_needed_gb\":4.619,\"pass_time_ms\":637.4,\"tokens_per_s\":102800.0,\"share\":{\"linear\":0.2892,\"attention\":0.6501,\"elementwise\":0.05975,\"overhead\":0.0009178},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":4.295}]}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "sweep",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "batches": [
+     1
+    ],
+    "contexts": [
+     16,
+     64,
+     256,
+     1024,
+     4096,
+     16384,
+     65536
+    ]
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"points\":[{\"phase\":\"prefill\",\"batch\":1,\"context\":16,\"fits_in_memory\":true,\"memory_needed_gb\":16.06,\"pass_time_ms\":6.496,\"tokens_per_s\":2463.0,\"share\":{\"linear\":0.8153,\"attention\":0.0005669,\"elementwise\":0.005386,\"overhead\":0.1787},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.004194},{\"phase\":\"prefill\",\"batch\":1,\"context\":64,\"fits_in_memory\":true,\"memory_needed_gb\":16.07,\"pass_time_ms\":6.686,\"tokens_per_s\":9572.0,\"share\":{\"linear\":0.8033,\"attention\":0.002203,\"elementwise\":0.02085,\"overhead\":0.1736},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.01678},{\"phase\":\"prefill\",\"batch\":1,\"context\":256,\"fits_in_memory\":true,\"memory_needed_gb\":16.09,\"pass_time_ms\":7.449,\"tokens_per_s\":34370.0,\"share\":{\"linear\":0.7614,\"attention\":0.00791,\"elementwise\":0.07477,\"overhead\":0.1559},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.06711},{\"phase\":\"prefill\",\"batch\":1,\"context\":1024,\"fits_in_memory\":true,\"memory_needed_gb\":16.19,\"pass_time_ms\":24.8,\"tokens_per_s\":41300.0,\"share\":{\"linear\":0.8472,\"attention\":0.01618,\"elementwise\":0.08982,\"overhead\":0.04682},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.2684},{\"phase\":\"prefill\",\"batch\":1,\"context\":4096,\"fits_in_memory\":true,\"memory_needed_gb\":16.6,\"pass_time_ms\":99.41,\"tokens_per_s\":41200.0,\"share\":{\"linear\":0.8342,\"attention\":0.06452,\"elementwise\":0.08962,\"overhead\":0.01168},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":15.01,\"kv_gb_read\":1.074},{\"phase\":\"prefill\",\"batch\":1,\"context\":16384,\"fits_in_memory\":true,\"memory_needed_gb\":18.21,\"pass_time_ms\":470.0,\"tokens_per_s\":34860.0,\"share\":{\"linear\":0.7034,\"attention\":0.2183,\"elementwise\":0.07582,\"overhead\":0.00247},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":15.01,\"kv_gb_read\":4.295},{\"phase\":\"prefill\",\"batch\":1,\"context\":65536,\"fits_in_memory\":true,\"memory_needed_gb\":24.65,\"pass_time_ms\":3106.0,\"tokens_per_s\":21100.0,\"share\":{\"linear\":0.4253,\"attention\":0.5284,\"elementwise\":0.04588,\"overhead\":0.0003737},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":15.01,\"kv_gb_read\":17.18}]}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "prefill",
+    "event": "linear_compute_bound",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"prefill\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":68,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":67,\"fits_in_memory\":true,\"memory_needed_gb\":2.202,\"pass_time_ms\":17.84,\"tokens_per_s\":3756.0,\"share\":{\"linear\":0.8243,\"attention\":0.004077,\"elementwise\":0.02755,\"overhead\":0.1441},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.003019},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":68,\"fits_in_memory\":true,\"memory_needed_gb\":2.202,\"pass_time_ms\":17.96,\"tokens_per_s\":3786.0,\"share\":{\"linear\":0.825,\"attention\":0.004126,\"elementwise\":0.02777,\"overhead\":0.1431},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.003064}}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "prefill",
+    "event": "linear_compute_bound",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"prefill\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":81,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":80,\"fits_in_memory\":true,\"memory_needed_gb\":2.474,\"pass_time_ms\":20.15,\"tokens_per_s\":3971.0,\"share\":{\"linear\":0.8778,\"attention\":0.003497,\"elementwise\":0.02559,\"overhead\":0.09315},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.005243},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":81,\"fits_in_memory\":true,\"memory_needed_gb\":2.474,\"pass_time_ms\":20.27,\"tokens_per_s\":3996.0,\"share\":{\"linear\":0.8781,\"attention\":0.003533,\"elementwise\":0.02576,\"overhead\":0.09259},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.005308}}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "event": "linear_compute_bound",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":311,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":310,\"fits_in_memory\":true,\"memory_needed_gb\":2.207,\"pass_time_ms\":1.944,\"tokens_per_s\":159500.0,\"share\":{\"linear\":0.4709,\"attention\":0.01136,\"elementwise\":0.1057,\"overhead\":0.4121},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.01397},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":311,\"fits_in_memory\":true,\"memory_needed_gb\":2.207,\"pass_time_ms\":1.947,\"tokens_per_s\":159700.0,\"share\":{\"linear\":0.4714,\"attention\":0.01137,\"elementwise\":0.1058,\"overhead\":0.4114},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.01401}}",
+   "seconds": 0.001
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "event": "linear_compute_bound",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":364,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":363,\"fits_in_memory\":true,\"memory_needed_gb\":2.484,\"pass_time_ms\":2.022,\"tokens_per_s\":179600.0,\"share\":{\"linear\":0.5959,\"attention\":0.01033,\"elementwise\":0.1044,\"overhead\":0.2894},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.02379},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":364,\"fits_in_memory\":true,\"memory_needed_gb\":2.484,\"pass_time_ms\":2.025,\"tokens_per_s\":179800.0,\"share\":{\"linear\":0.5963,\"attention\":0.01034,\"elementwise\":0.1045,\"overhead\":0.2889},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.472,\"kv_gb_read\":0.02386}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "event": "linear_compute_bound",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":284,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":283,\"fits_in_memory\":true,\"memory_needed_gb\":16.1,\"pass_time_ms\":7.915,\"tokens_per_s\":35760.0,\"share\":{\"linear\":0.7673,\"attention\":0.008229,\"elementwise\":0.07779,\"overhead\":0.1467},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.07419},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":284,\"fits_in_memory\":true,\"memory_needed_gb\":16.1,\"pass_time_ms\":7.937,\"tokens_per_s\":35780.0,\"share\":{\"linear\":0.7676,\"attention\":0.008235,\"elementwise\":0.07784,\"overhead\":0.1463},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":15.01,\"kv_gb_read\":0.07445}}",
+   "seconds": 0.002
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "prefill",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"prefill\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":21626,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":21625,\"fits_in_memory\":true,\"memory_needed_gb\":2.687,\"pass_time_ms\":5330.0,\"tokens_per_s\":4057.0,\"share\":{\"linear\":0.4849,\"attention\":0.4849,\"elementwise\":0.02972,\"overhead\":0.0004821},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.9743},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":21626,\"fits_in_memory\":true,\"memory_needed_gb\":2.687,\"pass_time_ms\":5330.0,\"tokens_per_s\":4057.0,\"share\":{\"linear\":0.4849,\"attention\":0.4849,\"elementwise\":0.02972,\"overhead\":0.0004821},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.9744}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "prefill",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"prefill\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":29816,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":29815,\"fits_in_memory\":true,\"memory_needed_gb\":3.449,\"pass_time_ms\":7334.0,\"tokens_per_s\":4065.0,\"share\":{\"linear\":0.4868,\"attention\":0.4868,\"elementwise\":0.02618,\"overhead\":0.0002559},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.954},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":29816,\"fits_in_memory\":true,\"memory_needed_gb\":3.449,\"pass_time_ms\":7335.0,\"tokens_per_s\":4065.0,\"share\":{\"linear\":0.4868,\"attention\":0.4868,\"elementwise\":0.02618,\"overhead\":0.0002559},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.954}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":21108,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":21107,\"fits_in_memory\":true,\"memory_needed_gb\":2.676,\"pass_time_ms\":133.0,\"tokens_per_s\":158700.0,\"share\":{\"linear\":0.4444,\"attention\":0.4444,\"elementwise\":0.1051,\"overhead\":0.006023},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.951},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":21108,\"fits_in_memory\":true,\"memory_needed_gb\":2.676,\"pass_time_ms\":133.0,\"tokens_per_s\":158700.0,\"share\":{\"linear\":0.4444,\"attention\":0.4444,\"elementwise\":0.1051,\"overhead\":0.006023},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.069,\"kv_gb_read\":0.951}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.2-1B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.2-1B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":29192,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":29191,\"fits_in_memory\":true,\"memory_needed_gb\":3.428,\"pass_time_ms\":182.0,\"tokens_per_s\":160400.0,\"share\":{\"linear\":0.4518,\"attention\":0.4518,\"elementwise\":0.09322,\"overhead\":0.003215},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.913},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":29192,\"fits_in_memory\":true,\"memory_needed_gb\":3.428,\"pass_time_ms\":182.0,\"tokens_per_s\":160400.0,\"share\":{\"linear\":0.4518,\"attention\":0.4518,\"elementwise\":0.09322,\"overhead\":0.003215},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":2.472,\"kv_gb_read\":1.913}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "Llama-3.1-8B",
+    "gpu": "H100-SXM",
+    "profile": "prior",
+    "phase": "prefill",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"Llama-3.1-8B\",\"gpu\":\"H100-SXM\",\"profile\":\"prior\",\"phase\":\"prefill\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":52751,\"before\":{\"phase\":\"prefill\",\"batch\":1,\"context\":52750,\"fits_in_memory\":true,\"memory_needed_gb\":22.97,\"pass_time_ms\":2243.0,\"tokens_per_s\":23520.0,\"share\":{\"linear\":0.4742,\"attention\":0.4742,\"elementwise\":0.05115,\"overhead\":0.0005176},\"dominant\":\"linear\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":15.01,\"kv_gb_read\":13.83},\"at\":{\"phase\":\"prefill\",\"batch\":1,\"context\":52751,\"fits_in_memory\":true,\"memory_needed_gb\":22.97,\"pass_time_ms\":2243.0,\"tokens_per_s\":23520.0,\"share\":{\"linear\":0.4742,\"attention\":0.4742,\"elementwise\":0.05115,\"overhead\":0.0005176},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"compute\",\"weight_gb_read\":15.01,\"kv_gb_read\":13.83}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "op_breakdown",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "calibrated",
+    "phase": "decode",
+    "batch": 1,
+    "context": 21548
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"calibrated\",\"phase\":\"decode\",\"batch\":1,\"context\":21548,\"ridge_flop_per_byte\":203.1,\"ops\":[{\"op\":\"attention\",\"kind\":\"attention\",\"count\":22,\"intensity\":8.153,\"bound\":\"memory\",\"time_share\":0.4398,\"total_time_ms\":7.866},{\"op\":\"gate_up_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.9994,\"bound\":\"memory\",\"time_share\":0.2218,\"total_time_ms\":3.967},{\"op\":\"down_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.9993,\"bound\":\"memory\",\"time_share\":0.1168,\"total_time_ms\":2.089},{\"op\":\"qkv_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.9991,\"bound\":\"memory\",\"time_share\":0.05957,\"total_time_ms\":1.065},{\"op\":\"o_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.999,\"bound\":\"memory\",\"time_share\":0.05002,\"total_time_ms\":0.8947},{\"op\":\"lm_head\",\"kind\":\"linear\",\"count\":1,\"intensity\":0.9995,\"bound\":\"memory\",\"time_share\":0.02765,\"total_time_ms\":0.4945},{\"op\":\"silu_mul\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.8333,\"bound\":\"overhead\",\"time_share\":0.012,\"total_time_ms\":0.2147},{\"op\":\"mlp_norm\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.6667,\"bound\":\"overhead\",\"time_share\":0.0119,\"total_time_ms\":0.2128},{\"op\":\"attn_norm\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.6667,\"bound\":\"overhead\",\"time_share\":0.0119,\"total_time_ms\":0.2128},{\"op\":\"residual_mlp\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.1667,\"bound\":\"overhead\",\"time_share\":0.01189,\"total_time_ms\":0.2127},{\"op\":\"residual_attn\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.1667,\"bound\":\"overhead\",\"time_share\":0.01189,\"total_time_ms\":0.2127},{\"op\":\"rope\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.75,\"bound\":\"overhead\",\"time_share\":0.01188,\"total_time_ms\":0.2125},{\"op\":\"kv_write\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.0,\"bound\":\"overhead\",\"time_share\":0.01184,\"total_time_ms\":0.2118},{\"op\":\"final_norm\",\"kind\":\"elementwise\",\"count\":1,\"intensity\":0.6667,\"bound\":\"overhead\",\"time_share\":0.0005408,\"total_time_ms\":0.009672},{\"op\":\"embed\",\"kind\":\"elementwise\",\"count\":1,\"intensity\":0.0,\"bound\":\"overhead\",\"time_share\":0.0005398,\"total_time_ms\":0.009654}]}",
+   "seconds": 0.073
+  },
+  {
+   "tool": "op_breakdown",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "peak",
+    "phase": "decode",
+    "batch": 1,
+    "context": 21548
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"peak\",\"phase\":\"decode\",\"batch\":1,\"context\":21548,\"ridge_flop_per_byte\":203.1,\"ops\":[{\"op\":\"gate_up_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.9994,\"bound\":\"memory\",\"time_share\":0.397,\"total_time_ms\":3.174},{\"op\":\"down_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.9993,\"bound\":\"memory\",\"time_share\":0.1985,\"total_time_ms\":1.587},{\"op\":\"attention\",\"kind\":\"attention\",\"count\":22,\"intensity\":8.153,\"bound\":\"memory\",\"time_share\":0.1899,\"total_time_ms\":1.518},{\"op\":\"qkv_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.9991,\"bound\":\"memory\",\"time_share\":0.09026,\"total_time_ms\":0.7215},{\"op\":\"o_proj\",\"kind\":\"linear\",\"count\":22,\"intensity\":0.999,\"bound\":\"memory\",\"time_share\":0.07222,\"total_time_ms\":0.5773},{\"op\":\"lm_head\",\"kind\":\"linear\",\"count\":1,\"intensity\":0.9995,\"bound\":\"memory\",\"time_share\":0.05127,\"total_time_ms\":0.4098},{\"op\":\"silu_mul\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.8333,\"bound\":\"memory\",\"time_share\":0.0002906,\"total_time_ms\":0.002323},{\"op\":\"residual_attn\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.1667,\"bound\":\"memory\",\"time_share\":0.0001057,\"total_time_ms\":0.0008448},{\"op\":\"mlp_norm\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.6667,\"bound\":\"memory\",\"time_share\":0.0001057,\"total_time_ms\":0.0008448},{\"op\":\"residual_mlp\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.1667,\"bound\":\"memory\",\"time_share\":0.0001057,\"total_time_ms\":0.0008448},{\"op\":\"attn_norm\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.6667,\"bound\":\"memory\",\"time_share\":0.0001057,\"total_time_ms\":0.0008448},{\"op\":\"rope\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.75,\"bound\":\"memory\",\"time_share\":7.926e-05,\"total_time_ms\":0.0006336},{\"op\":\"kv_write\",\"kind\":\"elementwise\",\"count\":22,\"intensity\":0.0,\"bound\":\"memory\",\"time_share\":8.807e-06,\"total_time_ms\":7.04e-05},{\"op\":\"final_norm\",\"kind\":\"elementwise\",\"count\":1,\"intensity\":0.6667,\"bound\":\"memory\",\"time_share\":4.804e-06,\"total_time_ms\":3.84e-05},{\"op\":\"embed\",\"kind\":\"elementwise\",\"count\":1,\"intensity\":0.0,\"bound\":\"memory\",\"time_share\":3.203e-06,\"total_time_ms\":2.56e-05}]}",
+   "seconds": 0.008
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "peak",
+    "phase": "decode",
+    "event": "linear_compute_bound",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"peak\",\"phase\":\"decode\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":235,\"before\":{\"phase\":\"decode\",\"batch\":234,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":13.0,\"pass_time_ms\":42.8,\"tokens_per_s\":5467.0,\"share\":{\"linear\":0.1761,\"attention\":0.7917,\"elementwise\":0.03224,\"overhead\":0.0},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":10.81},\"at\":{\"phase\":\"decode\",\"batch\":235,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":13.05,\"pass_time_ms\":42.97,\"tokens_per_s\":5468.0,\"share\":{\"linear\":0.1759,\"attention\":0.7919,\"elementwise\":0.03225,\"overhead\":0.0},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":10.85}}",
+   "seconds": 0.003
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "T4",
+    "profile": "prior",
+    "phase": "decode",
+    "event": "attention_exceeds_linear",
+    "axis": "context",
+    "fixed": 1,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"T4\",\"profile\":\"prior\",\"phase\":\"decode\",\"event\":\"attention_exceeds_linear\",\"description\":\"attention (KV-cache) time exceeds weight-matmul time\",\"axis\":\"context\",\"fixed\":1,\"result\":\"found\",\"value\":91887,\"before\":{\"phase\":\"decode\",\"batch\":1,\"context\":91886,\"fits_in_memory\":true,\"memory_needed_gb\":4.27,\"pass_time_ms\":17.25,\"tokens_per_s\":57.97,\"share\":{\"linear\":0.4688,\"attention\":0.4688,\"elementwise\":0.0004689,\"overhead\":0.06191},\"dominant\":\"linear\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.07},\"at\":{\"phase\":\"decode\",\"batch\":1,\"context\":91887,\"fits_in_memory\":true,\"memory_needed_gb\":4.27,\"pass_time_ms\":17.25,\"tokens_per_s\":57.97,\"share\":{\"linear\":0.4688,\"attention\":0.4688,\"elementwise\":0.0004689,\"overhead\":0.06191},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":2.07}}",
+   "seconds": 0.004
+  },
+  {
+   "tool": "find_crossover",
+   "input": {
+    "model": "TinyLlama-1.1B",
+    "gpu": "H100-SXM",
+    "profile": "peak",
+    "phase": "decode",
+    "event": "linear_compute_bound",
+    "axis": "batch",
+    "fixed": 2048,
+    "search_max": 1048576
+   },
+   "output": "{\"model\":\"TinyLlama-1.1B\",\"gpu\":\"H100-SXM\",\"profile\":\"peak\",\"phase\":\"decode\",\"event\":\"linear_compute_bound\",\"description\":\"weight matmuls become compute-bound (cross the ridge point)\",\"axis\":\"batch\",\"fixed\":2048,\"result\":\"found\",\"value\":368,\"before\":{\"phase\":\"decode\",\"batch\":367,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":19.14,\"pass_time_ms\":6.063,\"tokens_per_s\":60530.0,\"share\":{\"linear\":0.1286,\"attention\":0.8373,\"elementwise\":0.03409,\"overhead\":0.0},\"dominant\":\"attention\",\"linear_bound\":\"memory\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":16.95},\"at\":{\"phase\":\"decode\",\"batch\":368,\"context\":2048,\"fits_in_memory\":true,\"memory_needed_gb\":19.19,\"pass_time_ms\":6.079,\"tokens_per_s\":60540.0,\"share\":{\"linear\":0.1285,\"attention\":0.8374,\"elementwise\":0.03409,\"overhead\":0.0},\"dominant\":\"attention\",\"linear_bound\":\"compute\",\"attention_bound\":\"memory\",\"weight_gb_read\":2.069,\"kv_gb_read\":17.0}}",
+   "seconds": 0.004
+  }
+ ]
+}

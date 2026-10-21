@@ -12,7 +12,7 @@ runs on a Colab T4.
 | 2. Rooflines for T4 and H100 | done |
 | 3. Tokens/s prediction (TTFT, TPOT, decode and end-to-end throughput) | done |
 | 4. Measured T4 runs (llama.cpp) and error report | done ([report](reports/validation_TinyLlama-1.1B_T4_llamacpp.md)) |
-| 5. Sweep agent that writes up bottleneck shifts | planned |
+| 5. Sweep agent that writes up bottleneck shifts | done ([example report](reports/bottleneck_20261021-123905.md)) |
 
 ## Layout
 
@@ -109,6 +109,38 @@ Not modeled, so flagged and excluded by explicit rules:
 The remaining decode error is a consistent +14-17% over-prediction at batch 16-32.
 With flash attention off, prefill runs ~2x slower than predicted, because the model
 assumes fused attention.
+
+## Bottleneck sweep agent
+
+```
+python scripts/bottleneck_agent.py                     # default task: all models x both GPUs
+python scripts/bottleneck_agent.py --task "When does Llama-3.1-8B on H100 stop benefiting from batching?"
+```
+
+The agent is Claude Opus 5.5 using the SDK tool runner. It has four tools over the model:
+
+- `describe_setup`
+- `sweep` (grid of batch x context)
+- `find_crossover`, which bisects for the exact batch or context where attention
+  overtakes the weight matmuls, the matmuls cross the ridge point, launch overhead
+  drops below 10%, or memory runs out
+- `op_breakdown`
+
+The agent decides what to explore and writes a Markdown report to `reports/`. Every
+number in the report is checked against the tool outputs, and unmatched numbers are
+listed in the report's provenance section. The full tool-call log goes to
+`results/agent_runs/`. It needs `ANTHROPIC_API_KEY`, set in the environment or in a
+git-ignored `.env`.
+
+The example run made 58 tool calls for ~$0.86. All 190 numbers in its report
+were traced to tool output.
+
+The report notes one result it could not explain: on the T4, Llama-3.2-1B's batch-1
+attention crossover comes *later* than TinyLlama's, while on the H100 it comes
+earlier. The cause is the calibrated attention-parallelism term. Llama-3.2-1B has
+8 KV heads to TinyLlama's 4, so at batch 1 its attention reaches 8/(8+12.9) ≈ 38% of
+bandwidth instead of 4/(4+12.9) ≈ 24%. The uncalibrated H100 profile has no such
+term, so its ordering follows raw KV bytes per token.
 
 ## Early observations (before validation)
 
