@@ -118,6 +118,22 @@ Not modeled, so flagged and excluded by explicit rules:
 - **The first batched-bench measurement was a cold start,** 3.6x slower than the same
   workload in `llama-bench`.
 
+A follow-up **kernel probe** on the T4 ([report](reports/kernel_probe_t4.md)) traced the
+small-batch anomaly to llama.cpp itself:
+
+- **The slow batch moved with the llama.cpp version.** With a newer commit (`7775ffb`),
+  batch 2 is normal (11.1 ms, model -5%) and **batch 3** is now the slow one (14.4 ms vs
+  10.6 ms at batch 4). On the same hardware, that points to which matmul kernel llama.cpp
+  picks for small batches, not to the GPU.
+- **CUDA graphs are not the cause.** Disabling them changes batch 2 and 3 by only +6-7% and
+  other batches by at most 2%.
+- **Three matmul paths are in play for fp16 weights:** `mul_mat_vec_f`, the tiled `mul_mat_f`,
+  and cuBLAS GEMMs with fp16/fp32 conversion kernels. The Nsight capture recorded CUDA
+  graphs as single items, so per-kernel decode timings need a rerun with
+  `--cuda-graph-trace=node` (the probe notebook now does this).
+- **A second step appears between batch 16 (13.2 ms) and 20 (15.7 ms).** From there on, the
+  model under-predicts by 10-14%.
+
 The remaining decode error is a consistent +14-17% over-prediction at batch 16-32.
 With flash attention off, prefill runs ~2x slower than predicted, because the model
 assumes fused attention.

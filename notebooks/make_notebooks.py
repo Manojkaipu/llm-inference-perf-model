@@ -103,12 +103,38 @@ name, driver, mem, power, sm_max, mem_max, cc = [s.strip() for s in info.split("
 SLUG = gpu_slug(name)
 MEM_BYTES = float(mem.split()[0]) * 2**20
 CUDA_ARCH = cc.replace(".", "")
-OUT = f"/content/results_{SLUG}"
+if PERSIST:   # survive disconnects: results and caches live on Google Drive
+    from google.colab import drive
+    drive.mount("/content/drive")
+    BASE = "/content/drive/MyDrive/llm_perf_model"
+else:
+    BASE = "/content"
+OUT = f"{BASE}/results_{SLUG}{RESULTS_SUFFIX}"
+CACHE = f"{BASE}/cache"
 os.makedirs(OUT, exist_ok=True)
-env = dict(gpu_name=name, driver=driver, memory_total=mem, power_limit=power,
+os.makedirs(CACHE, exist_ok=True)
+ENV_PATH = f"{OUT}/env.json"
+env = json.load(open(ENV_PATH)) if os.path.exists(ENV_PATH) else {
+    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
+env.update(gpu_name=name, driver=driver, memory_total=mem, power_limit=power,
            max_sm_clock=sm_max, max_mem_clock=mem_max, compute_cap=cc, hf_model=HF_MODEL,
-           n_batch=N_BATCH, n_ubatch=N_UBATCH,
-           timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+           n_batch=N_BATCH, n_ubatch=N_UBATCH)
+
+
+def save_env():
+    json.dump(env, open(ENV_PATH, "w"), indent=2)
+
+
+def done(fname):
+    \"\"\"True if a previous (disconnected) session already produced this output.\"\"\"
+    path = f"{OUT}/{fname}"
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        print(f"{fname} already exists from an earlier session; skipping. Delete it to re-measure.")
+        return True
+    return False
+
+
+save_env()
 print(f"GPU {name} -> results in {OUT}, building for sm_{CUDA_ARCH}")
 
 # Throttle-reason field was renamed in newer drivers; use whichever this one accepts.
@@ -118,44 +144,69 @@ for reason in ("clocks_event_reasons.active", "clocks_throttle_reasons.active", 
     if run(["nvidia-smi", f"--query-gpu={f}", "--format=csv"]).returncode == 0:
         fields = f
         break
-gpu_log = open(f"{OUT}/gpu_log.csv", "w")
-gpu_logger = subprocess.Popen(["nvidia-smi", f"--query-gpu={fields}", "--format=csv", "-lms", "500"],
-                              stdout=gpu_log)
+resumed = os.path.exists(f"{OUT}/gpu_log.csv")
+gpu_log = open(f"{OUT}/gpu_log.csv", "a")      # append across sessions, header only once
+gpu_logger = subprocess.Popen(
+    ["nvidia-smi", f"--query-gpu={fields}", "--format=csv" + (",noheader" if resumed else ""),
+     "-lms", "500"], stdout=gpu_log)
 """
 
 BUILD = """
+BUILD_CACHE = f"{CACHE}/llamacpp_sm{CUDA_ARCH}"
+cached = os.path.exists(f"{BUILD_CACHE}/bin/llama-batched-bench") and not REBUILD
 shutil.rmtree("/content/llama.cpp", ignore_errors=True)
-run(["git", "clone", "--depth", "1", "--branch", LLAMA_CPP_REF,
-     "https://github.com/ggml-org/llama.cpp", "/content/llama.cpp"], check=True)
-env["llama_cpp_ref"] = LLAMA_CPP_REF
-env["llama_cpp_commit"] = run(["git", "-C", "/content/llama.cpp", "rev-parse", "HEAD"],
-                              check=True).stdout.strip()
-print("commit", env["llama_cpp_commit"])
-
-run(["cmake", "-S", "/content/llama.cpp", "-B", "/content/llama.cpp/build",
-     "-DGGML_CUDA=ON", f"-DCMAKE_CUDA_ARCHITECTURES={CUDA_ARCH}",   # this GPU's arch only
-     "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release"], check=True)
-run(["cmake", "--build", "/content/llama.cpp/build", "--config", "Release", "-j", os.cpu_count(),
-     "--target", "llama-bench", "llama-batched-bench"], check=True)
+if cached:
+    # Reuse binaries from an earlier session; fetch the matching source for the converter.
+    commit = open(f"{BUILD_CACHE}/commit.txt").read().strip()
+    os.makedirs("/content/llama.cpp")
+    run(["git", "-C", "/content/llama.cpp", "init", "-q"], check=True)
+    run(["git", "-C", "/content/llama.cpp", "fetch", "-q", "--depth", "1",
+         "https://github.com/ggml-org/llama.cpp", commit], check=True)
+    run(["git", "-C", "/content/llama.cpp", "checkout", "-q", "FETCH_HEAD"], check=True)
+    shutil.copytree(f"{BUILD_CACHE}/bin", BIN, dirs_exist_ok=True)
+    for f in os.listdir(BIN):
+        os.chmod(f"{BIN}/{f}", 0o755)            # Drive drops the executable bit
+    print("using cached build", commit)
+else:
+    run(["git", "clone", "--depth", "1", "--branch", LLAMA_CPP_REF,
+         "https://github.com/ggml-org/llama.cpp", "/content/llama.cpp"], check=True)
+    commit = run(["git", "-C", "/content/llama.cpp", "rev-parse", "HEAD"], check=True).stdout.strip()
+    run(["cmake", "-S", "/content/llama.cpp", "-B", "/content/llama.cpp/build",
+         "-DGGML_CUDA=ON", f"-DCMAKE_CUDA_ARCHITECTURES={CUDA_ARCH}",   # this GPU's arch only
+         "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release"], check=True)
+    run(["cmake", "--build", "/content/llama.cpp/build", "--config", "Release", "-j", os.cpu_count(),
+         "--target", "llama-bench", "llama-batched-bench"], check=True)
+    shutil.copytree(BIN, f"{BUILD_CACHE}/bin", dirs_exist_ok=True)
+    open(f"{BUILD_CACHE}/commit.txt", "w").write(commit)
 assert os.path.exists(f"{BIN}/llama-bench") and os.path.exists(f"{BIN}/llama-batched-bench")
+if env.get("llama_cpp_commit", commit) != commit:
+    print("WARNING: earlier results in this folder used llama.cpp", env["llama_cpp_commit"])
+env.update(llama_cpp_ref=LLAMA_CPP_REF, llama_cpp_commit=commit)
+save_env()
 """
 
 MODEL = """
-from huggingface_hub import snapshot_download
+GGUF_CACHE = f"{CACHE}/tinyllama-1.1b-f16.gguf"
+if os.path.exists(GGUF_CACHE):
+    shutil.copy(GGUF_CACHE, GGUF)
+    print("using cached GGUF")
+else:
+    from huggingface_hub import snapshot_download
 
-model_dir = snapshot_download(HF_MODEL, allow_patterns=["*.json", "*.safetensors", "tokenizer.model"])
-if not any(f.endswith(".safetensors") for f in os.listdir(model_dir)):
-    model_dir = snapshot_download(HF_MODEL, allow_patterns=["*.json", "*.bin", "tokenizer.model"])
+    model_dir = snapshot_download(HF_MODEL, allow_patterns=["*.json", "*.safetensors", "tokenizer.model"])
+    if not any(f.endswith(".safetensors") for f in os.listdir(model_dir)):
+        model_dir = snapshot_download(HF_MODEL, allow_patterns=["*.json", "*.bin", "tokenizer.model"])
 
-run([sys.executable, "-m", "pip", "install", "-q", "sentencepiece"], check=True)
-convert = [sys.executable, "/content/llama.cpp/convert_hf_to_gguf.py", model_dir,
-           "--outtype", "f16", "--outfile", GGUF]
-r = run(convert)
-if r.returncode != 0:   # converter needs a dependency Colab lacks; install its requirements
-    print(r.stderr[-2000:])
-    run([sys.executable, "-m", "pip", "install", "-q", "-r",
-         "/content/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt"], check=True)
-    run(convert, check=True)
+    run([sys.executable, "-m", "pip", "install", "-q", "sentencepiece"], check=True)
+    convert = [sys.executable, "/content/llama.cpp/convert_hf_to_gguf.py", model_dir,
+               "--outtype", "f16", "--outfile", GGUF]
+    r = run(convert)
+    if r.returncode != 0:   # converter needs a dependency Colab lacks; install its requirements
+        print(r.stderr[-2000:])
+        run([sys.executable, "-m", "pip", "install", "-q", "-r",
+             "/content/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt"], check=True)
+        run(convert, check=True)
+    shutil.copy(GGUF, GGUF_CACHE)
 print(f"{os.path.getsize(GGUF) / 1e9:.2f} GB")
 """
 
@@ -164,18 +215,16 @@ def package(zip_stem):
     return f"""
 gpu_logger.terminate()
 gpu_log.close()
-json.dump(env, open(f"{{OUT}}/env.json", "w"), indent=2)
+save_env()
 
 g = pd.read_csv(f"{{OUT}}/gpu_log.csv", skipinitialspace=True)
 print(g.describe().loc[["min", "50%", "max"]].to_string())
 
 archive = f"/content/{{SLUG}}_{zip_stem}"
 shutil.make_archive(archive, "zip", OUT)
-if SAVE_TO_DRIVE:
-    from google.colab import drive
-    drive.mount("/content/drive")
-    os.makedirs("/content/drive/MyDrive/llm_perf_model", exist_ok=True)
-    shutil.copy(archive + ".zip", "/content/drive/MyDrive/llm_perf_model/")
+if PERSIST:
+    shutil.copy(archive + ".zip", BASE)
+    print("zip also saved to", BASE)
 from google.colab import files
 files.download(archive + ".zip")
 """
@@ -199,7 +248,10 @@ architecture, and the batch grid is sized to its memory.
 | `gpu_log.csv` | SM/memory clocks, power and temperature every 0.5 s |
 | `env.json` | GPU, driver, llama.cpp commit, flags used |
 
-**How to run:** Runtime > Change runtime type > pick a GPU, then Runtime > Run all.
+**How to run:** Runtime > Change runtime type > pick a GPU, then Runtime > Run all, and
+approve the Google Drive prompt. Results, the llama.cpp build and the model are saved to
+`My Drive/llm_perf_model/` as each step finishes, so **if the runtime disconnects, reconnect
+and Run all again**: finished steps are skipped and the build is reused.
 The last cell downloads `<gpu>_llamacpp.zip`. Unzip it into `measurements/<gpu>_llamacpp/`
 in the repo and run `python scripts/validate.py measurements/<gpu>_llamacpp`.
 """),
@@ -207,7 +259,9 @@ in the repo and run `python scripts/validate.py measurements/<gpu>_llamacpp`.
 # --- configuration -----------------------------------------------------------
 LLAMA_CPP_REF = "master"   # branch or release tag; the exact commit is recorded
 HF_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-SAVE_TO_DRIVE = False      # also copy results to My Drive/llm_perf_model/
+PERSIST = True             # results + build/model caches on Google Drive (resumable)
+REBUILD = False            # True forces a fresh llama.cpp build even if one is cached
+RESULTS_SUFFIX = "_llamacpp"
 
 N_BATCH, N_UBATCH = 2048, 512
 
@@ -220,7 +274,7 @@ REPS = 5
 # llama-batched-bench: prompt lengths; batch sizes are powers of two up to what fits
 BB_NPP = [128, 512, 2048]
 BB_NTG = 128
-BB_MAX_NPL = 512
+BB_MAX_NPL = 256
 """ + HELPERS),
     md("## 1. Detect the GPU and start a clock/power logger"),
     code(GPU_CHECK),
@@ -268,8 +322,9 @@ print(f"read_bw,{read_bw:.6g},B/s")
 print(f"matmul_flops_burst,{burst:.6g},FLOP/s")
 print(f"matmul_flops_sustained,{sustained:.6g},FLOP/s")
 """
-r = run([sys.executable, "-c", MICRO], check=True)
-open(f"{OUT}/microbench.csv", "w").write(r.stdout)
+if not done("microbench.csv"):
+    r = run([sys.executable, "-c", MICRO], check=True)
+    open(f"{OUT}/microbench.csv", "w").write(r.stdout)
 pd.read_csv(f"{OUT}/microbench.csv")
 '''),
     md("## 3. Build llama.cpp with CUDA for this GPU (~10-20 min on Colab's CPUs)"),
@@ -286,16 +341,18 @@ are the main comparison.
 bench = [f"{BIN}/llama-bench", "-m", GGUF, "-ngl", 99, "-b", N_BATCH, "-ub", N_UBATCH, "-r", REPS,
          "-p", ",".join(map(str, BENCH_PROMPTS)), "-n", BENCH_GEN,
          "-d", ",".join(map(str, BENCH_DEPTHS)), "-o", "csv"]
-for fa in (["-fa", "0,1"], ["-fa", "off,on"]):     # flag syntax differs across versions
-    r = run(bench + fa)
-    if r.returncode == 0 and r.stdout.strip():
-        break
-    print(r.stderr[-1500:])
-else:
-    raise RuntimeError("llama-bench failed")
-env["llama_bench_fa_arg"] = " ".join(fa)
-open(f"{OUT}/llama_bench.csv", "w").write(r.stdout)
-open(f"{OUT}/llama_bench.log", "w").write(r.stderr)
+if not done("llama_bench.csv"):
+    for fa in (["-fa", "0,1"], ["-fa", "off,on"]):     # flag syntax differs across versions
+        r = run(bench + fa)
+        if r.returncode == 0 and r.stdout.strip():
+            break
+        print(r.stderr[-1500:])
+    else:
+        raise RuntimeError("llama-bench failed")
+    env["llama_bench_fa_arg"] = " ".join(fa)
+    save_env()
+    open(f"{OUT}/llama_bench.log", "w").write(r.stderr)
+    open(f"{OUT}/llama_bench.csv", "w").write(r.stdout)
 lb = pd.read_csv(f"{OUT}/llama_bench.csv")
 lb[["n_prompt", "n_gen", "n_depth", "flash_attn", "avg_ts", "stddev_ts"]]
 """),
@@ -310,18 +367,27 @@ fit = int((0.85 * MEM_BYTES - WEIGHT_BYTES - 1.5e9) // per_seq)
 npl = [b for b in (2**i for i in range(10)) if b <= min(fit, BB_MAX_NPL)]
 print("batch sizes:", npl)
 
-r, fa = batched_bench(BB_NPP, BB_NTG, npl)
-while fa is None and len(npl) > 1:     # most likely out of memory: drop the largest batch
-    npl = npl[:-1]
-    print("retrying with npl =", npl)
-    r, fa = batched_bench(BB_NPP, BB_NTG, npl)
-assert fa is not None, "llama-batched-bench failed"
-env["batched_bench_fa_arg"] = " ".join(fa) or "(default)"
-env["batched_bench_npl"] = npl
-log = r.stdout + "\\n" + r.stderr
-open(f"{OUT}/batched_bench.log", "w").write(log)
-bb = parse_batched_bench(log, n_ubatch=N_UBATCH, flash_attn=fa != [])
-assert len(bb), "could not parse the batched-bench table; see batched_bench.log"
+frames = []
+for npp in BB_NPP:                     # one run per prompt length, saved as it finishes
+    fname = f"batched_bench_pp{npp}.csv"
+    if not done(fname):
+        sizes = list(npl)
+        r, fa = batched_bench([npp], BB_NTG, sizes)
+        while fa is None and len(sizes) > 1:   # most likely out of memory: drop the largest batch
+            sizes = sizes[:-1]
+            print("retrying with npl =", sizes)
+            r, fa = batched_bench([npp], BB_NTG, sizes)
+        assert fa is not None, "llama-batched-bench failed"
+        log = r.stdout + "\\n" + r.stderr
+        open(f"{OUT}/batched_bench_pp{npp}.log", "w").write(log)
+        df = parse_batched_bench(log, n_ubatch=N_UBATCH, flash_attn=fa != [])
+        assert len(df), f"could not parse the batched-bench table; see batched_bench_pp{npp}.log"
+        env["batched_bench_fa_arg"] = " ".join(fa) or "(default)"
+        env.setdefault("batched_bench_npl", {})[str(npp)] = sizes
+        save_env()
+        df.to_csv(f"{OUT}/{fname}", index=False)
+    frames.append(pd.read_csv(f"{OUT}/{fname}"))
+bb = pd.concat(frames, ignore_index=True)
 bb.to_csv(f"{OUT}/batched_bench.csv", index=False)
 bb
 """),
@@ -348,14 +414,17 @@ to explain both:
 Experiment C installs Nsight Systems if needed and is skipped if that fails.
 
 **How to run:** use the same GPU type as the run you want to explain (T4 by default), then
-Runtime > Run all (~25 min, mostly the build). Unzip `<gpu>_kernel_probe.zip` into
+Runtime > Run all (~25 min, mostly the build) and approve the Google Drive prompt. After a
+disconnect, Run all again: finished experiments are skipped and the build is reused. Unzip `<gpu>_kernel_probe.zip` into
 `measurements/<gpu>_kernel_probe/` and run `python scripts/analyze_probe.py measurements/<gpu>_kernel_probe`.
 """),
     code("""
 # --- configuration -----------------------------------------------------------
 LLAMA_CPP_REF = "master"
 HF_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-SAVE_TO_DRIVE = False
+PERSIST = True             # results + build/model caches on Google Drive (resumable)
+REBUILD = False            # True forces a fresh llama.cpp build even if one is cached
+RESULTS_SUFFIX = "_kernel_probe"
 N_BATCH, N_UBATCH = 2048, 512
 
 NPP, NTG = 512, 64                       # same prompt length as the training rows
@@ -372,29 +441,37 @@ NSYS_NPP, NSYS_NTG = 32, 128             # short prompt so decode kernels domina
     code(MODEL),
     md("## A. Fine batch sweep (default settings)"),
     code("""
-r, fa = batched_bench([NPP], NTG, FINE_NPL)
-assert fa is not None, "llama-batched-bench failed"
-env["fa_arg"] = " ".join(fa) or "(default)"
-open(f"{OUT}/probe_fine.log", "w").write(r.stdout + "\\n" + r.stderr)
-fine = parse_batched_bench(r.stdout + "\\n" + r.stderr, graphs="default")
-fine["step_ms"] = fine.t_tg / fine.tg * 1e3
-fine.to_csv(f"{OUT}/probe_fine.csv", index=False)
+if not done("probe_fine.csv"):
+    r, fa = batched_bench([NPP], NTG, FINE_NPL)
+    assert fa is not None, "llama-batched-bench failed"
+    env.update(fa_arg=" ".join(fa) or "(default)", probe_npp=NPP, probe_ntg=NTG)
+    save_env()
+    open(f"{OUT}/probe_fine.log", "w").write(r.stdout + "\\n" + r.stderr)
+    fine = parse_batched_bench(r.stdout + "\\n" + r.stderr, graphs="default")
+    fine["step_ms"] = fine.t_tg / fine.tg * 1e3
+    fine.to_csv(f"{OUT}/probe_fine.csv", index=False)
+fine = pd.read_csv(f"{OUT}/probe_fine.csv")
 fine[["b", "step_ms", "s_tg"]]
 """),
     md("## B. Same batches with CUDA graphs disabled"),
     code("""
-r, _ = batched_bench([NPP], NTG, AB_NPL, env={"GGML_CUDA_DISABLE_GRAPHS": "1"})
-open(f"{OUT}/probe_graphs_off.log", "w").write(r.stdout + "\\n" + r.stderr)
-off = parse_batched_bench(r.stdout + "\\n" + r.stderr, graphs="off")
-off["step_ms"] = off.t_tg / off.tg * 1e3
-off.to_csv(f"{OUT}/probe_graphs_off.csv", index=False)
+if not done("probe_graphs_off.csv"):
+    r, _ = batched_bench([NPP], NTG, AB_NPL, env={"GGML_CUDA_DISABLE_GRAPHS": "1"})
+    open(f"{OUT}/probe_graphs_off.log", "w").write(r.stdout + "\\n" + r.stderr)
+    off = parse_batched_bench(r.stdout + "\\n" + r.stderr, graphs="off")
+    off["step_ms"] = off.t_tg / off.tg * 1e3
+    off.to_csv(f"{OUT}/probe_graphs_off.csv", index=False)
+off = pd.read_csv(f"{OUT}/probe_graphs_off.csv")
 off.merge(fine[["b", "step_ms"]], on="b", suffixes=("_graphs_off", "_default"))
 """),
     md("""
 ## C. Nsight Systems: which kernels run at each batch size
 
 Each batch size is profiled in its own short run (prompt 32, 128 decode steps), so per-step
-kernel counts are roughly `instances / 128`.
+kernel counts are roughly `instances / 128`. llama.cpp runs decode as CUDA graphs, and by
+default Nsight records a graph as one item instead of listing its kernels, so this
+uses `--cuda-graph-trace=node`. If this nsys version lacks that option, graphs are disabled
+for the profiled runs instead (experiment B shows that barely changes step time).
 """),
     code("""
 def find_nsys():
@@ -415,14 +492,22 @@ def find_nsys():
     return None
 
 NSYS = find_nsys()
-env.update(nsys=NSYS, probe_npp=NPP, probe_ntg=NTG, nsys_npp=NSYS_NPP, nsys_ntg=NSYS_NTG)
 print("nsys:", NSYS)
 if NSYS:
+    node_trace = "cuda-graph-trace" in run([NSYS, "profile", "--help"]).stdout
+    graph_args = ["--cuda-graph-trace", "node"] if node_trace else []
+    graph_env = None if node_trace else {"GGML_CUDA_DISABLE_GRAPHS": "1"}
+    env.update(nsys=NSYS, nsys_npp=NSYS_NPP, nsys_ntg=NSYS_NTG,
+               nsys_graph_mode="node trace" if node_trace else "graphs disabled")
+    save_env()
     for b in NSYS_NPL:
+        if done(f"kern_{b}_cuda_gpu_kern_sum.csv"):
+            continue
         rep = f"/content/prof_{b}"
-        r, _ = batched_bench([NSYS_NPP], NSYS_NTG, [b],
+        r, _ = batched_bench([NSYS_NPP], NSYS_NTG, [b], env=graph_env,
                              prefix=(NSYS, "profile", "-o", rep, "--force-overwrite", "true",
-                                     "--trace", "cuda", "--sample", "none", "--cpuctxsw", "none"))
+                                     "--trace", "cuda", "--sample", "none", "--cpuctxsw", "none",
+                                     *graph_args))
         s = run([NSYS, "stats", "--report", "cuda_gpu_kern_sum", "--format", "csv",
                  "--output", f"{OUT}/kern_{b}", "--force-export", "true", rep + ".nsys-rep"])
         print(s.stdout[-500:], s.stderr[-500:])

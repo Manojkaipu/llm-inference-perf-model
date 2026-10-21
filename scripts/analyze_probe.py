@@ -124,9 +124,16 @@ def main():
     plt.close(fig)
 
     # --- report ---------------------------------------------------------------------
+    commit = env.get("llama_cpp_commit", "?")
+    val_env = meas.parent / f"{slug}_llamacpp" / "env.json"
+    val_commit = json.loads(val_env.read_text()).get("llama_cpp_commit") if val_env.exists() else None
+    commit_note = ""
+    if val_commit and val_commit != commit:
+        commit_note = (f"\n\n**Note:** the validation run on this GPU used llama.cpp `{val_commit[:10]}`; "
+                       f"this probe used `{commit[:10]}`. Kernel dispatch can differ between them.")
     sections = [f"""# Kernel probe: TinyLlama-1.1B decode on {env['gpu_name']} (llama.cpp)
 
-llama.cpp `{env.get('llama_cpp_commit', '?')[:10]}`, measured {env.get('timestamp', '?')}.
+llama.cpp `{commit[:10]}`, measured {env.get('timestamp', '?')}.{commit_note}
 Decode step = `t_tg / tg` from llama-batched-bench at prompt {npp}, {ntg} generated tokens.
 The model column uses the **{prof_name}** profile for {gpu.name}.
 
@@ -151,10 +158,27 @@ cost model, so a sign of a different code path):
                              'step_ms_default': 'default ms',
                              'off_vs_default_pct': 'change %'}))}
 
-If the batch-2 penalty disappears or the batch-1 time rises to match batch 2 with graphs
-off, the gap is CUDA-graph capture. If batch 2 is unchanged, it is the kernel choice.
+If an anomalous batch's penalty disappears with graphs off (or its neighbours slow down to
+match it), the gap is CUDA-graph capture. If it persists, it is the kernel choice.
 """)
-    if len(kernels):
+    # A TinyLlama decode step launches ~13 kernels per layer x 22 layers; far fewer means
+    # Nsight recorded CUDA graphs as single items and the decode kernels are missing.
+    launches_seen = kernels.groupby("batch").launches_per_step.sum() if len(kernels) else None
+    if launches_seen is not None and launches_seen.median() < 100:
+        names = (kernels.sort_values("ms_per_step", ascending=False)
+                 .drop_duplicates("kernel").head(8).kernel.str.slice(0, 90))
+        sections.append(f"""## C. Kernel summary: not usable
+
+Only {launches_seen.median():.0f} kernel launches per decode step were recorded (a step runs
+~290). Nsight recorded llama.cpp's CUDA graphs as single items, so the decode kernels inside
+them are missing and the per-step timings mostly reflect prefill. Rerun experiment C with
+`nsys profile --cuda-graph-trace=node` (the current probe notebook does this).
+
+Kernels that were captured (outside graphs), for reference:
+
+{chr(10).join('- `' + n + '`' for n in names)}
+""")
+    elif len(kernels):
         by_cat = (kernels.groupby(["batch", "category"])
                   .agg(ms_per_step=("ms_per_step", "sum"),
                        launches_per_step=("launches_per_step", "sum")).reset_index())
@@ -179,7 +203,7 @@ Top matrix-multiply kernels per batch:
 
 {md_table(top_matmul, "{:.3f}")}
 """)
-    else:
+    if not len(kernels):
         sections.append("## C. Kernel summary\n\nNo Nsight Systems data in this probe.\n")
 
     (ROOT / "reports").mkdir(exist_ok=True)
