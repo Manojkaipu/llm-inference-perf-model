@@ -47,7 +47,8 @@ def _rmsnorm(name, n_tok, d, b, count):
 
 
 def forward_ops(cfg: ModelConfig, batch: int, new_tokens: int, past_tokens: int,
-                causal: bool = True) -> list[Op]:
+                causal: bool = True, logits: bool = True) -> list[Op]:
+    """`logits=False` drops the LM head, e.g. for non-final chunks of a split prompt."""
     b, bkv = cfg.dtype_bytes, cfg.kv_dtype_bytes
     d, hd, L = cfg.hidden, cfg.head_dim, cfg.n_layers
     n = batch * new_tokens
@@ -82,9 +83,10 @@ def forward_ops(cfg: ModelConfig, batch: int, new_tokens: int, past_tokens: int,
         _linear("down_proj", n, cfg.intermediate, d, b, L),
         Op("residual_mlp", ELEMENTWISE, flops=n * d, act_bytes=3 * n * d * b, count=L),
         _rmsnorm("final_norm", n, d, b, 1),
-        # Serving engines compute logits only for each sequence's last position.
-        _linear("lm_head", batch, d, cfg.vocab, b, 1),
     ]
+    if logits:
+        # Serving engines compute logits only for each sequence's last position.
+        ops.append(_linear("lm_head", batch, d, cfg.vocab, b, 1))
     return ops
 
 

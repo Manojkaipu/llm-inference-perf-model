@@ -11,7 +11,7 @@ runs on a Colab T4.
 | 1. Per-op FLOP / byte model (prefill + decode, GQA, SwiGLU, KV cache) | done |
 | 2. Rooflines for T4 and H100 | done |
 | 3. Tokens/s prediction (TTFT, TPOT, decode and end-to-end throughput) | done |
-| 4. Measured T4 runs (vLLM / llama.cpp) and error report | next |
+| 4. Measured T4 runs (llama.cpp) and error report | notebook + validation code ready; awaiting Colab run |
 | 5. Sweep agent that writes up bottleneck shifts | planned |
 
 ## Layout
@@ -21,9 +21,12 @@ perfmodel/config.py    model presets (TinyLlama-1.1B, Llama-3.2-1B, Llama-3.1-8B
 perfmodel/hardware.py  GPU specs and efficiency profiles (peak / realistic priors)
 perfmodel/ops.py       per-op FLOPs and bytes for one forward pass
 perfmodel/predict.py   roofline timing, memory-fit check, throughput prediction
-perfmodel/plots.py     roofline, throughput and time-breakdown figures
+perfmodel/plots.py     roofline, throughput, time-breakdown and validation figures
+perfmodel/validate.py  llama.cpp workloads, vectorized evaluation, efficiency fitting
 scripts/run_baseline.py  writes results/*.csv and figures/*.png
-tests/                 sanity checks (param counts, 2*params FLOPs, bound regimes)
+scripts/validate.py    measured vs predicted error report -> reports/
+notebooks/t4_llamacpp_benchmark.ipynb  Colab T4 measurement run
+tests/                 sanity checks, plus fit recovery on synthetic measurements
 ```
 
 ```
@@ -32,6 +35,22 @@ python scripts/run_baseline.py                         # TinyLlama, realistic pr
 python scripts/run_baseline.py --model Llama-3.1-8B --peak
 python -m pytest -q
 ```
+
+## Validation workflow
+
+1. Open `notebooks/t4_llamacpp_benchmark.ipynb` in Colab and choose Run all (T4 runtime, ~30 min).
+2. Unzip the downloaded `t4_llamacpp.zip` into `measurements/t4_llamacpp/`.
+3. `python scripts/validate.py measurements/t4_llamacpp` writes `reports/validation_*.md` with the error report.
+
+The report compares four efficiency profiles: datasheet **peak**, the hand-set
+**prior**, **microbench** (bandwidth and FLOP/s measured with PyTorch on the
+same GPU, no fitting) and **fitted**. The fitted profile is fit on batch-1
+`llama-bench` rows only. The `batched-bench` rows (batch 1-128) are held out, so
+their error is out-of-sample.
+
+To match what llama.cpp actually executes, the predicted workloads include
+prompt splitting into 512-token micro-batches (weights are re-read per chunk) and
+decode over the exact context range each benchmark covers.
 
 ## Modeling assumptions
 

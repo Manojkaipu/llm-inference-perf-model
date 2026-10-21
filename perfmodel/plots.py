@@ -131,6 +131,68 @@ def decode_throughput(cfg, gpus, effs, contexts, batches, gen_len=64, path=None)
     plt.close(fig)
 
 
+def validation_parity(df, profiles, labels, path=None, title="Predicted vs measured"):
+    """Predicted vs measured tokens/s; one panel per phase, color = profile,
+    marker = benchmark source. Dashed lines mark +/-20%."""
+    phases = [p for p in ("prefill", "decode") if (df.phase == p).any()]
+    fig, axes = _fig(len(phases), width=5.0, height=4.6)
+    markers = {"llama-bench": "o", "batched-bench": "s"}
+    for ax, phase in zip(axes, phases):
+        sub = df[df.phase == phase]
+        lo, hi = sub.measured_tok_s.min() / 2, sub.measured_tok_s.max() * 2
+        xs = np.array([lo, hi])
+        ax.plot(xs, xs, color=TEXT_2, linewidth=1.2)
+        for f in (0.8, 1.2):
+            ax.plot(xs, xs * f, color=TEXT_2, linewidth=0.8, linestyle="--")
+        for color, p in zip(SERIES, profiles):
+            for src, m in markers.items():
+                s = sub[sub.source == src]
+                ax.scatter(s.measured_tok_s, s[f"pred_{p}"], color=color, marker=m, s=40,
+                           edgecolor=SURFACE, linewidth=1.2, zorder=3,
+                           label=f"{labels[p]} ({src})")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_title(phase.capitalize(), fontsize=10, color=TEXT, loc="left")
+        ax.set_xlabel("Measured tokens/s", color=TEXT_2, fontsize=9)
+    axes[0].set_ylabel("Predicted tokens/s", color=TEXT_2, fontsize=9)
+    axes[-1].legend(frameon=False, fontsize=7.5, labelcolor=TEXT, loc="upper left",
+                    bbox_to_anchor=(1.0, 1.0))
+    fig.suptitle(title, x=0.01, ha="left", color=TEXT, fontsize=12)
+    fig.tight_layout()
+    if path:
+        fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def validation_batched(df, profiles, labels, path=None, title="Batched decode"):
+    """Decode tokens/s vs batch for each prompt length: measured points and
+    predicted lines."""
+    sub = df[(df.source == "batched-bench") & (df.phase == "decode")]
+    prompts = sorted(sub.depth.unique())
+    fig, axes = _fig(len(prompts), width=4.4, height=4.0)
+    for ax, pp in zip(axes, prompts):
+        s = sub[sub.depth == pp].sort_values("batch")
+        for color, p, ls in zip(SERIES, profiles, ("-", "--", ":")):
+            ax.plot(s.batch, s[f"pred_{p}"], color=color, linewidth=2, linestyle=ls,
+                    label=f"predicted, {labels[p]}")
+        ax.scatter(s.batch, s.measured_tok_s, color=TEXT, s=36, zorder=3,
+                   edgecolor=SURFACE, linewidth=1.2, label="measured")
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log")
+        ax.set_xticks(s.batch, [str(b) for b in s.batch])
+        ax.set_title(f"Prompt {pp:,} tokens", fontsize=10, color=TEXT, loc="left")
+        ax.set_xlabel("Batch size (sequences)", color=TEXT_2, fontsize=9)
+    axes[0].set_ylabel("Decode throughput (tokens/s)", color=TEXT_2, fontsize=9)
+    axes[0].legend(frameon=False, fontsize=8, labelcolor=TEXT)
+    fig.suptitle(title, x=0.01, ha="left", color=TEXT, fontsize=12)
+    fig.tight_layout()
+    if path:
+        fig.savefig(path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+
+
 def decode_breakdown(cfg, gpus, effs, context, batches, path=None):
     """Share of decode-step time by op kind vs batch (100% stacked bars).
     Kernel launch overhead is split out as its own segment."""
