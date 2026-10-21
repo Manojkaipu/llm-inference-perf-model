@@ -174,7 +174,12 @@ else:
     run(["cmake", "-S", "/content/llama.cpp", "-B", "/content/llama.cpp/build",
          "-DGGML_CUDA=ON", f"-DCMAKE_CUDA_ARCHITECTURES={CUDA_ARCH}",   # this GPU's arch only
          "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release"], check=True)
-    run(["cmake", "--build", "/content/llama.cpp/build", "--config", "Release", "-j", os.cpu_count(),
+    # Each nvcc job on llama.cpp's CUDA kernels can take a few GB of RAM. One job per core
+    # exhausts memory on many-core VMs and crashes the runtime, so cap jobs by free RAM.
+    avail_gb = int(open("/proc/meminfo").read().split("MemAvailable:")[1].split()[0]) / 2**20
+    jobs = max(1, min(os.cpu_count(), int(avail_gb // 3)))
+    print(f"{os.cpu_count()} CPUs, {avail_gb:.0f} GB RAM free -> {jobs} parallel compile jobs")
+    run(["cmake", "--build", "/content/llama.cpp/build", "--config", "Release", "-j", jobs,
          "--target", "llama-bench", "llama-batched-bench"], check=True)
     shutil.copytree(BIN, f"{BUILD_CACHE}/bin", dirs_exist_ok=True)
     open(f"{BUILD_CACHE}/commit.txt", "w").write(commit)
