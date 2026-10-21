@@ -103,12 +103,15 @@ name, driver, mem, power, sm_max, mem_max, cc = [s.strip() for s in info.split("
 SLUG = gpu_slug(name)
 MEM_BYTES = float(mem.split()[0]) * 2**20
 CUDA_ARCH = cc.replace(".", "")
+BASE = "/content"
 if PERSIST:   # survive disconnects: results and caches live on Google Drive
     from google.colab import drive
-    drive.mount("/content/drive")
-    BASE = "/content/drive/MyDrive/llm_perf_model"
-else:
-    BASE = "/content"
+    try:
+        drive.mount("/content/drive")
+        BASE = "/content/drive/MyDrive/llm_perf_model"
+    except Exception as e:   # popup dismissed/timed out, or the account blocks Drive mounts
+        print(f"WARNING: Google Drive mount failed ({e}). Continuing with local storage: "
+              "results are still downloaded at the end, but a disconnect cannot be resumed.")
 OUT = f"{BASE}/results_{SLUG}{RESULTS_SUFFIX}"
 CACHE = f"{BASE}/cache"
 os.makedirs(OUT, exist_ok=True)
