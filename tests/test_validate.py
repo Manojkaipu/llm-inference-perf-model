@@ -4,17 +4,46 @@ import pytest
 
 from perfmodel import T4, TINYLLAMA_1_1B, Efficiency, decode_ops, pass_time, prefill_ops, totals
 from perfmodel.validate import (CompiledCases, case_ops, case_tokens, decode_run_ops,
-                                fit_efficiency, load_cases, predict_cases, prefill_pass_ops)
+                                fit_efficiency, flag_anomalies, load_cases, predict_cases,
+                                prefill_pass_ops)
 
 CFG = TINYLLAMA_1_1B
 TRUE = Efficiency(compute=0.42, memory=0.78, kernel_overhead_s=5e-6)
 
 
-def test_compiled_matches_scalar_pass_time():
+REFINED = Efficiency(compute=0.25, memory=0.85, kernel_overhead_s=9e-6,
+                     attention_half_work=13.0, overlap=1.1)
+
+
+@pytest.mark.parametrize("eff", [TRUE, REFINED])
+def test_compiled_matches_scalar_pass_time(eff):
     lists = [decode_ops(CFG, 8, 1000), prefill_ops(CFG, 2, 300)]
-    got = CompiledCases(lists).times(T4, TRUE)
-    want = [pass_time(ops, T4, TRUE) for ops in lists]
+    got = CompiledCases(lists).times(T4, eff)
+    want = [pass_time(ops, T4, eff) for ops in lists]
     assert got == pytest.approx(want, rel=1e-9)
+
+
+def test_attention_ramp_slows_small_batch_decode_attention_only():
+    ramp = Efficiency(memory=0.85, attention_half_work=13.0)
+    flat = Efficiency(memory=0.85)
+    attn = lambda b, e: next(o for o in decode_ops(CFG, b, 4096) if o.name == "attention")
+    from perfmodel import op_time
+    slow = op_time(attn(1, ramp), T4, ramp)[1] / op_time(attn(1, flat), T4, flat)[1]
+    fast = op_time(attn(128, ramp), T4, ramp)[1] / op_time(attn(128, flat), T4, flat)[1]
+    assert slow == pytest.approx((4 + 13) / 4)       # batch 1 x 4 KV heads
+    assert fast == pytest.approx((512 + 13) / 512)
+
+
+def test_flag_anomalies():
+    rows = [dict(source="llama-bench", phase="prefill", batch=1, prompt=128, depth=0,
+                 measured_tok_s=5000.0)]
+    rows += [dict(source="batched-bench", phase="prefill", batch=1, prompt=128, depth=0,
+                  measured_tok_s=1500.0)]
+    for b, tps in [(1, 100.0), (2, 120.0), (4, 360.0), (8, 700.0)]:
+        rows.append(dict(source="batched-bench", phase="decode", batch=b, prompt=0, depth=128,
+                         measured_tok_s=tps))
+    flags = flag_anomalies(pd.DataFrame(rows))
+    assert flags.tolist() == ["", "cold start", "", "non-monotonic decode", "", ""]
 
 
 @pytest.mark.parametrize("batch, prompt", [(1, 2048), (4, 2048), (16, 128), (5, 128)])

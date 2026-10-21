@@ -24,6 +24,7 @@ class Op:
     act_bytes: float = 0.0
     kv_bytes: float = 0.0
     count: int = 1          # repeats per forward pass (n_layers for per-layer ops)
+    parallelism: int = 0    # independent work items (attention: sequences x KV heads x queries)
 
     @property
     def bytes(self) -> float:
@@ -73,7 +74,7 @@ def forward_ops(cfg: ModelConfig, batch: int, new_tokens: int, past_tokens: int,
            flops=batch * cfg.n_heads * pairs * (4 * hd + 5),
            act_bytes=2 * n * cfg.q_dim * b,                       # read Q, write O
            kv_bytes=batch * total_ctx * 2 * cfg.kv_dim * bkv,     # read K and V once
-           count=L),
+           count=L, parallelism=batch * cfg.n_kv_heads * new_tokens),
         _linear("o_proj", n, cfg.q_dim, d, b, L),
         Op("residual_attn", ELEMENTWISE, flops=n * d, act_bytes=3 * n * d * b, count=L),
         _rmsnorm("mlp_norm", n, d, b, L),

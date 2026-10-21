@@ -11,7 +11,7 @@ runs on a Colab T4.
 | 1. Per-op FLOP / byte model (prefill + decode, GQA, SwiGLU, KV cache) | done |
 | 2. Rooflines for T4 and H100 | done |
 | 3. Tokens/s prediction (TTFT, TPOT, decode and end-to-end throughput) | done |
-| 4. Measured T4 runs (llama.cpp) and error report | notebook + validation code ready; awaiting Colab run |
+| 4. Measured T4 runs (llama.cpp) and error report | done ([report](reports/validation_TinyLlama-1.1B_T4_llamacpp.md)) |
 | 5. Sweep agent that writes up bottleneck shifts | planned |
 
 ## Layout
@@ -57,8 +57,11 @@ decode over the exact context range each benchmark covers.
 - **Ideal traffic**: each weight, activation and KV entry crosses DRAM once
   (perfect tiling reuse, fused FlashAttention-style attention, no S x S
   score matrix in memory).
-- **Op time** = `max(FLOPs / (peak * eff_compute), bytes / (BW * eff_memory)) + launch overhead`.
-  Ops run serially; there is no overlap between ops.
+- **Op time** = `combine(FLOPs / (peak * eff_compute), bytes / (BW * eff_memory)) + launch overhead`.
+  `combine` is `max` by default (classic roofline) or the soft maximum
+  `(t_c^p + t_m^p)^(1/p)` when calibrated. Ops run serially; there is no overlap between ops.
+- Attention can optionally have its bandwidth scaled by available parallelism
+  (`Efficiency.attention_half_work`). It is off by default and calibrated in validation.
 - Matmuls and attention use the FP16 tensor-core peak. Norms and activations use the FP32 CUDA-core peak.
 - Prefill attention exploits causal masking (half the score matrix). Logits
   are computed only for each sequence's last position.
@@ -67,6 +70,45 @@ decode over the exact context range each benchmark covers.
   workspace ignored).
 - `REALISTIC` efficiencies (T4: 45% compute, 80% bandwidth, 4 us/kernel;
   H100: 70%, 85%, 3 us) are **priors** that phase 4 calibrates.
+
+## Validation results: TinyLlama-1.1B fp16 on a Colab T4 (llama.cpp)
+
+Training data: 35 rows (batch-1 `llama-bench` and batched rows at a 512-token prompt).
+Held out: 29 batched rows at 128- and 2048-token prompts, batch 1-128.
+
+| Held-out MAPE | decode | prefill |
+|---|---|---|
+| Datasheet peaks | 103% | 313% |
+| Hand-set prior | 47% | 96% |
+| Measured bandwidth / FLOP/s (no fitting) | 52% | 56% |
+| Fitted classic roofline (max) | 13.5% | 3.5% |
+| **Refined** | **8.7%** | **4.4%** |
+
+What closed the gap, in order of size:
+
+1. **The T4 is power-capped, not compute-capped.** Under load it sat at its 70 W
+   limit 100% of the time, and the SM clock dropped to a median of 690 MHz
+   (boost: 1590 MHz). Effective tensor-core throughput is ~1/4 of the 65 TFLOPS
+   datasheet figure. Memory clocks did not throttle, so bandwidth held at 85% of peak.
+2. **Decode attention needs parallelism to use the bandwidth.** At batch 1 there
+   are only 4 KV heads' worth of work for 40 SMs, so attention reached ~20% of bandwidth.
+   The refined model scales attention bandwidth by `w / (w + 12.9)`, where
+   `w` = sequences x KV heads.
+3. **Compute and memory barely overlap within a kernel.** The fitted soft-max
+   exponent is 1.1, so op time is close to `t_compute + t_memory`, not `max`.
+   This matters for mid-size batches near the ridge point.
+4. **Per-kernel overhead is ~10 us,** about 3 ms of the ~10 ms batch-1 decode step.
+
+Not modeled, so flagged and excluded by explicit rules:
+
+- **Batch-2 decode is slower per step than batch 4** (17 ms vs 11 ms), at every prompt
+  length. That is likely a llama.cpp kernel-dispatch effect.
+- **The first batched-bench measurement was a cold start,** 3.6x slower than the same
+  workload in `llama-bench`.
+
+The remaining decode error is a consistent +14-17% over-prediction at batch 16-32.
+With flash attention off, prefill runs ~2x slower than predicted, because the model
+assumes fused attention.
 
 ## Early observations (before validation)
 

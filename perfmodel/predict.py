@@ -1,23 +1,42 @@
 """Roofline timing and throughput prediction.
 
-Each op takes max(compute time, memory time) + a fixed launch overhead, i.e.
-compute and memory traffic overlap perfectly within an op and ops run serially.
+Each op takes combine(compute time, memory time) + a fixed launch overhead, and
+ops run serially. With the default `overlap=inf`, combine is max(): the classic
+roofline, where compute and memory traffic overlap perfectly within an op.
 """
+import math
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from .config import ModelConfig
 from .hardware import GPU, PEAK, Efficiency
-from .ops import ELEMENTWISE, Op, decode_ops, prefill_ops
+from .ops import ATTENTION, ELEMENTWISE, Op, decode_ops, prefill_ops
+
+
+def combine(t_c, t_m, overlap: float):
+    """Soft maximum of compute and memory time; works on floats and numpy arrays."""
+    if math.isinf(overlap):
+        return np.maximum(t_c, t_m)
+    return (t_c ** overlap + t_m ** overlap) ** (1 / overlap)
+
+
+def attention_mem_eff(eff: Efficiency, parallelism):
+    """Bandwidth efficiency of an attention op; works on scalars and arrays."""
+    base = eff.attention_memory or eff.memory
+    if not eff.attention_half_work:
+        return base
+    return base * parallelism / (parallelism + eff.attention_half_work)
 
 
 def op_time(op: Op, gpu: GPU, eff: Efficiency = PEAK) -> tuple[float, float, float]:
     """Return (compute_s, memory_s, total_s) for one instance of `op`."""
     peak = gpu.vector_flops if op.kind == ELEMENTWISE else gpu.matmul_flops
+    mem_eff = attention_mem_eff(eff, op.parallelism) if op.kind == ATTENTION else eff.memory
     t_c = op.flops / (peak * eff.compute)
-    t_m = op.bytes / (gpu.mem_bw * eff.memory)
-    return t_c, t_m, max(t_c, t_m) + eff.kernel_overhead_s
+    t_m = op.bytes / (gpu.mem_bw * mem_eff)
+    return t_c, t_m, float(combine(t_c, t_m, eff.overlap)) + eff.kernel_overhead_s
 
 
 def pass_time(ops: list[Op], gpu: GPU, eff: Efficiency = PEAK) -> float:

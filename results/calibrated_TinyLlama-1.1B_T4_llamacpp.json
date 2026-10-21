@@ -1,0 +1,47 @@
+{
+  "peak": {
+    "compute": 1.0,
+    "memory": 1.0,
+    "kernel_overhead_s": 0.0,
+    "mem_utilization": 0.9,
+    "attention_memory": null,
+    "attention_half_work": null,
+    "overlap": null
+  },
+  "prior": {
+    "compute": 0.45,
+    "memory": 0.8,
+    "kernel_overhead_s": 4e-06,
+    "mem_utilization": 0.9,
+    "attention_memory": null,
+    "attention_half_work": null,
+    "overlap": null
+  },
+  "microbench": {
+    "compute": 0.3469353846153846,
+    "memory": 0.85331875,
+    "kernel_overhead_s": 4e-06,
+    "mem_utilization": 0.9,
+    "attention_memory": null,
+    "attention_half_work": null,
+    "overlap": null
+  },
+  "roofline": {
+    "compute": 0.2212957539197776,
+    "memory": 0.5532230244259511,
+    "kernel_overhead_s": 2.0148810960722076e-10,
+    "mem_utilization": 0.9,
+    "attention_memory": null,
+    "attention_half_work": null,
+    "overlap": null
+  },
+  "refined": {
+    "compute": 0.2566128042496086,
+    "memory": 0.85331875,
+    "kernel_overhead_s": 9.624080906798803e-06,
+    "mem_utilization": 0.9,
+    "attention_memory": null,
+    "attention_half_work": 12.880942449309734,
+    "overlap": 1.1065484558234795
+  }
+}

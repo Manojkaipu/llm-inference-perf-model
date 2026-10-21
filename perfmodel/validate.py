@@ -12,10 +12,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize
 
 from .config import ModelConfig
 from .hardware import GPU, Efficiency
-from .ops import ELEMENTWISE, Op, decode_ops, forward_ops
+from .ops import ATTENTION, ELEMENTWISE, Op, decode_ops, forward_ops
+from .predict import attention_mem_eff, combine
 
 
 # --- workloads as llama.cpp executes them ------------------------------------
@@ -57,7 +59,7 @@ class CompiledCases:
     evaluated over all cases in a few numpy operations (needed for fitting)."""
 
     def __init__(self, op_lists: list[list[Op]]):
-        rows, mm, vec, byt, cnt = [], [], [], [], []
+        rows, mm, vec, byt, cnt, attn, par = [], [], [], [], [], [], []
         for i, ops in enumerate(op_lists):
             for o in ops:
                 rows.append(i)
@@ -65,15 +67,19 @@ class CompiledCases:
                 vec.append(o.flops if o.kind == ELEMENTWISE else 0.0)
                 byt.append(o.bytes)
                 cnt.append(o.count)
+                attn.append(o.kind == ATTENTION)
+                par.append(o.parallelism)
         self.n = len(op_lists)
         self.row = np.array(rows)
         self.mm, self.vec = np.array(mm), np.array(vec)
         self.bytes, self.count = np.array(byt), np.array(cnt, dtype=float)
+        self.attn, self.par = np.array(attn), np.array(par, dtype=float)
 
     def times(self, gpu: GPU, eff: Efficiency) -> np.ndarray:
         t_c = (self.mm / gpu.matmul_flops + self.vec / gpu.vector_flops) / eff.compute
-        t_m = self.bytes / (gpu.mem_bw * eff.memory)
-        t = (np.maximum(t_c, t_m) + eff.kernel_overhead_s) * self.count
+        mem_eff = np.where(self.attn, attention_mem_eff(eff, self.par), eff.memory)
+        t_m = self.bytes / (gpu.mem_bw * mem_eff)
+        t = (combine(t_c, t_m, eff.overlap) + eff.kernel_overhead_s) * self.count
         return np.bincount(self.row, weights=t, minlength=self.n)
 
 
@@ -166,44 +172,101 @@ def log_rmse(pred: np.ndarray, meas: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.log(pred / meas) ** 2)))
 
 
+FIT_BOUNDS = {
+    "compute": (0.02, 1.0),
+    "memory": (0.3, 1.0),
+    "attention_memory": (0.02, 1.0),
+    "attention_half_work": (0.1, 2000.0),
+    "kernel_overhead_s": (0.0, 50e-6),
+    "overlap": (1.0, 16.0),
+}
+
+
 def fit_efficiency(cases: pd.DataFrame, compiled: CompiledCases, gpu: GPU,
-                   mask: np.ndarray | None = None) -> Efficiency:
-    """Coarse-to-fine grid search for (compute, memory, overhead) minimizing the
-    RMS log error of tokens/s over the cases selected by `mask`."""
+                   mask: np.ndarray | None = None,
+                   free=("compute", "memory", "kernel_overhead_s"),
+                   base: Efficiency = Efficiency()) -> Efficiency:
+    """Fit the `free` Efficiency fields (others taken from `base`) to minimize the
+    RMS log error of tokens/s over the cases selected by `mask`.
+
+    Bounded Powell search in [0, 1]-normalized coordinates, from several starts.
+    """
     meas = cases.measured_tok_s.to_numpy()
     mask = np.ones(len(cases), bool) if mask is None else mask
     tokens = np.array([case_tokens(c) for c in cases.itertuples()], dtype=float)
+    lo = np.array([FIT_BOUNDS[f][0] for f in free])
+    hi = np.array([FIT_BOUNDS[f][1] for f in free])
 
-    def loss(ec, em, oh):
-        t = compiled.times(gpu, Efficiency(ec, em, oh))
+    def to_eff(u):
+        return replace(base, **dict(zip(free, (lo + np.clip(u, 0, 1) * (hi - lo)).tolist())))
+
+    def loss(u):
+        t = compiled.times(gpu, to_eff(u))
         return log_rmse(tokens[mask] / t[mask], meas[mask])
 
-    lo = np.array([0.05, 0.30, 0.0])
-    hi = np.array([1.00, 1.00, 30e-6])
-    best = None
-    for _ in range(4):
-        grids = [np.linspace(a, b, 11) for a, b in zip(lo, hi)]
-        for ec in grids[0]:
-            for em in grids[1]:
-                for oh in grids[2]:
-                    val = loss(ec, em, oh)
-                    if best is None or val < best[0]:
-                        best = (val, ec, em, oh)
-        step = (hi - lo) / 10
-        center = np.array(best[1:])
-        lo = np.maximum(center - step, [0.01, 0.05, 0.0])
-        hi = np.minimum(center + step, [1.0, 1.0, 100e-6])
-    _, ec, em, oh = best
-    return Efficiency(compute=float(ec), memory=float(em), kernel_overhead_s=float(oh))
+    starts = [np.full(len(free), s) for s in (0.2, 0.5, 0.8)]
+    best = min((minimize(loss, u0, method="Powell", bounds=[(0, 1)] * len(free),
+                         options={"xtol": 1e-4, "ftol": 1e-7}) for u0 in starts),
+               key=lambda r: r.fun)
+    return to_eff(best.x)
 
 
-def error_summary(df: pd.DataFrame, profiles: list[str]) -> pd.DataFrame:
-    """Mean absolute % error and mean signed % error by source x phase x profile."""
+def flag_anomalies(cases: pd.DataFrame) -> pd.Series:
+    """Rule-based flags for measurements no roofline-style model can reproduce.
+
+    - cold start: a batched-bench prefill at least 2x slower than llama-bench on
+      the identical workload (batch 1, same prompt, depth 0).
+    - non-monotonic decode: a batched decode step slower than the step at the
+      next larger batch for the same prompt. More work cannot take less time
+      under any additive cost model, so this points to a kernel-dispatch change.
+    """
+    flags = pd.Series("", index=cases.index)
+    ref = cases[(cases.source == "llama-bench") & (cases.phase == "prefill") & (cases.depth == 0)]
+    ref = ref.groupby("prompt").measured_tok_s.mean()
+    bb = cases.source == "batched-bench"
+    for i, c in cases[bb & (cases.phase == "prefill") & (cases.batch == 1)].iterrows():
+        if c.prompt in ref.index and c.measured_tok_s < 0.5 * ref[c.prompt]:
+            flags[i] = "cold start"
+    dec = cases[bb & (cases.phase == "decode")].copy()
+    dec["step_s"] = dec.batch / dec.measured_tok_s
+    for _, g in dec.groupby("depth"):
+        g = g.sort_values("batch")
+        slower = g.step_s.to_numpy()[:-1] > g.step_s.to_numpy()[1:]
+        for i in g.index[:-1][slower]:
+            flags[i] = "non-monotonic decode"
+    return flags
+
+
+def gpu_log_summary(meas_dir: Path, busy_util: float = 50) -> dict:
+    """Clock / power behaviour while the GPU was busy (nvidia-smi log)."""
+    path = Path(meas_dir) / "gpu_log.csv"
+    if not path.exists():
+        return {}
+    g = pd.read_csv(path, skipinitialspace=True)
+    num = lambda col: g[col].astype(str).str.extract(r"([\d.]+)")[0].astype(float)
+    cols = {c.split(" ")[0]: c for c in g.columns}
+    sm, util = num(cols["clocks.current.sm"]), num(cols["utilization.gpu"])
+    busy = util >= busy_util
+    out = {"busy_samples": int(busy.sum()),
+           "sm_clock_median_mhz": float(sm[busy].median()),
+           "power_median_w": float(num(cols["power.draw"])[busy].median()),
+           "temp_max_c": float(num(cols["temperature.gpu"]).max())}
+    reason_col = next((c for c in g.columns if "reasons" in c), None)
+    if reason_col:
+        # bit 0x4 = software power cap
+        bits = g[reason_col][busy].astype(str).apply(lambda s: int(s, 16) if s.startswith("0x") else 0)
+        out["power_capped_frac"] = float(((bits & 0x4) > 0).mean())
+    return out
+
+
+def error_summary(df: pd.DataFrame, profiles: list[str], by=("split", "phase")) -> pd.DataFrame:
+    """Mean absolute % error and mean signed % error per group and profile."""
     out = []
-    for (src, phase), g in df.groupby(["source", "phase"]):
+    for keys, g in df.groupby(list(by)):
+        keys = keys if isinstance(keys, tuple) else (keys,)
         for p in profiles:
             err = g[f"err_{p}"]
-            out.append({"source": src, "phase": phase, "profile": p, "n": len(g),
+            out.append({**dict(zip(by, keys)), "profile": p, "n": len(g),
                         "mape_pct": 100 * err.abs().mean(),
                         "bias_pct": 100 * err.mean(),
                         "worst_pct": 100 * err.loc[err.abs().idxmax()]})

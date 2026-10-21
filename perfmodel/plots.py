@@ -4,6 +4,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from .hardware import GPU, PEAK, Efficiency
 from .ops import ATTENTION, ELEMENTWISE, LINEAR
@@ -154,6 +155,9 @@ def validation_parity(df, profiles, labels, path=None, title="Predicted vs measu
         ax.set_yscale("log")
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}"))
+            axis.set_minor_formatter(NullFormatter())
         ax.set_title(phase.capitalize(), fontsize=10, color=TEXT, loc="left")
         ax.set_xlabel("Measured tokens/s", color=TEXT_2, fontsize=9)
     axes[0].set_ylabel("Predicted tokens/s", color=TEXT_2, fontsize=9)

@@ -4,6 +4,7 @@ Peak numbers are vendor datasheet values (dense, no sparsity). The "realistic"
 efficiencies are priors, not measurements -- phase 4 calibrates them against
 measured T4 runs.
 """
+import math
 from dataclasses import dataclass
 
 
@@ -34,6 +35,15 @@ class Efficiency:
     memory: float = 1.0           # fraction of peak bandwidth achieved
     kernel_overhead_s: float = 0.0  # fixed cost per kernel launch
     mem_utilization: float = 0.9  # usable fraction of memory for weights + KV cache
+    # Bandwidth fraction achieved by attention kernels (KV-cache reads); None = `memory`.
+    attention_memory: float | None = None
+    # Attention needs enough independent work (sequences x KV heads x queries) to
+    # fill the GPU: its bandwidth is scaled by w / (w + attention_half_work).
+    # None = no ramp.
+    attention_half_work: float | None = None
+    # How compute and memory time combine within an op: (t_c^p + t_m^p)^(1/p).
+    # inf = perfect overlap (classic roofline max); 1 = no overlap (sum).
+    overlap: float = math.inf
 
 
 PEAK = Efficiency()

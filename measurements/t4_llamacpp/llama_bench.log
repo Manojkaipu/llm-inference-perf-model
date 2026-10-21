@@ -1,0 +1,2 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 14912 MiB):
+  Device 0: Tesla T4, compute capability 7.5, VMM: yes, VRAM: 14912 MiB
