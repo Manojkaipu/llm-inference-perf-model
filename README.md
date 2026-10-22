@@ -1,8 +1,9 @@
 # Analytical Performance Model for LLM Inference
 
 Predicts per-layer FLOPs, memory traffic, roofline placement and tokens/s for
-Llama-style decoders on NVIDIA T4 and H100, to be validated against measured
-runs on a Colab T4.
+Llama-style decoders on NVIDIA T4 and H100. The T4 predictions are validated
+against measured llama.cpp runs on Colab: 8.7% decode and 4.4% prefill held-out
+error. The H100 predictions use estimated efficiencies and have not been measured.
 
 ## Status
 
@@ -13,6 +14,8 @@ runs on a Colab T4.
 | 3. Tokens/s prediction (TTFT, TPOT, decode and end-to-end throughput) | done |
 | 4. Measured T4 runs (llama.cpp) and error report | done ([report](reports/validation_TinyLlama-1.1B_T4_llamacpp.md)) |
 | 5. Sweep agent that writes up bottleneck shifts | done ([example report](reports/bottleneck_20261021-123905.md)) |
+| Follow-up: T4 kernel probe of the small-batch anomaly | done ([report](reports/kernel_probe_t4.md)); per-kernel Nsight timings need a rerun with graph-node tracing |
+| Follow-up: H100 calibration | not run; `notebooks/gpu_llamacpp_benchmark.ipynb` supports it on any Colab GPU |
 
 ## Layout
 
