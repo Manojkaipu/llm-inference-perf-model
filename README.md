@@ -5,6 +5,13 @@ Llama-style decoders on NVIDIA T4 and H100. The T4 predictions are validated
 against measured llama.cpp runs on Colab: 8.7% decode and 4.4% prefill held-out
 error. The H100 predictions use estimated efficiencies and have not been measured.
 
+![Batched decode throughput on a T4: measured points against the fitted roofline and refined model, for 128-, 512- and 2048-token prompts](figures/validation_batched_TinyLlama-1.1B_T4_llamacpp.png)
+
+*TinyLlama-1.1B decode throughput on a Colab T4 (llama.cpp, fp16), batch 1-128.
+Dots are measurements; lines are predictions. The refined model (dotted) adds a
+compute/memory overlap term and attention bandwidth that grows with parallel work.
+The 128- and 2048-token panels were held out from fitting.*
+
 ## Status
 
 | Phase | State |
