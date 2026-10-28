@@ -182,8 +182,27 @@ ver = run([f"{VENV}/bin/python", "-c",
            "import vllm, torch; print(vllm.__version__, torch.__version__, torch.version.cuda)"],
           check=True).stdout.split()
 env.update(vllm_version=ver[0], vllm_torch=ver[1], vllm_torch_cuda=ver[2])
-save_env()
 print("vLLM", ver[0], "| torch", ver[1], "| CUDA", ver[2])
+
+# The server runs from the venv without activating it, so put the venv's tools
+# (e.g. ninja, which FlashInfer uses to JIT-compile kernels) on PATH explicitly.
+SERVER_ENV = {**os.environ, "PATH": f"{VENV}/bin:" + os.environ.get("PATH", "")}
+if os.path.exists("/usr/local/cuda/bin/nvcc"):
+    SERVER_ENV.setdefault("CUDA_HOME", "/usr/local/cuda")
+EXTRA_ENV = dict(env.get("server_extra_env") or {})   # fallbacks found in an earlier session
+
+# Precompiled FlashInfer kernels, so vLLM does not need to compile any at startup.
+fi = run([f"{VENV}/bin/python", "-c", "import flashinfer; print(flashinfer.__version__)"])
+fi_ver = fi.stdout.strip() if fi.returncode == 0 else ""
+if fi_ver:
+    r = run([sys.executable, "-m", "uv", "pip", "install", "--python", f"{VENV}/bin/python",
+             f"flashinfer-cubin=={fi_ver}"])
+    env["flashinfer_cubin_installed"] = r.returncode == 0
+dk = run([f"{VENV}/bin/vllm", "download-kernels"], env=SERVER_ENV)
+env.update(flashinfer_version=fi_ver, vllm_download_kernels_ok=dk.returncode == 0)
+save_env()
+print("FlashInfer", fi_ver or "not installed", "| cubin:", env.get("flashinfer_cubin_installed"),
+      "| vllm download-kernels:", "ok" if dk.returncode == 0 else "failed")
 
 run([sys.executable, "-m", "pip", "install", "-q", "aiohttp"], check=True)
 
@@ -265,31 +284,61 @@ def stop_server(proc):
         pass
 
 
+# A startup failure while FlashInfer builds a kernel (no ninja/nvcc, or a toolkit that
+# does not match vLLM's CUDA) can be avoided with vLLM's PyTorch sampler instead.
+FLASHINFER_BUILD_ERROR = re.compile(r"No such file or directory: 'ninja'|flashinfer[./]jit", re.I)
+
+
+def flashinfer_build_failed(log):
+    # Every vLLM log may start with a harmless "FlashInfer kernels are disabled" warning.
+    lines = [l for l in log.splitlines() if "FlashInfer kernels are disabled" not in l]
+    return bool(FLASHINFER_BUILD_ERROR.search("\n".join(lines)))
+
+
+def _launch(tag, i, extra, attempt):
+    log_path = f"{OUT}/logs/server_{tag}_{i}{'_retry' if attempt else ''}.log"
+    cmd = [f"{VENV}/bin/vllm", "serve", TARGET, "--served-model-name", "target",
+           "--dtype", "half", "--max-model-len", MAX_MODEL_LEN,
+           "--gpu-memory-utilization", GPU_MEM_UTIL, "--max-num-seqs", MAX_NUM_SEQS,
+           "--port", PORT, "--seed", 0, *extra]
+    cmd = [str(c) for c in cmd]
+    print("$", " ".join(cmd), " ".join(f"{k}={v}" for k, v in EXTRA_ENV.items()), flush=True)
+    proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT,
+                            start_new_session=True, env={**SERVER_ENV, **EXTRA_ENV})
+    t0 = time.time()
+    while proc.poll() is None and time.time() - t0 < SERVER_TIMEOUT_S:
+        if _healthy():
+            return proc, log_path, time.time() - t0
+        time.sleep(5)
+    stop_server(proc)
+    return None, log_path, time.time() - t0
+
+
 def start_server(tag, variants):
     """Start `vllm serve` with the first argument variant that comes up healthy
     (flag spellings differ between vLLM versions)."""
     for i, extra in enumerate(variants):
-        wait_gpu_free()
-        log_path = f"{OUT}/logs/server_{tag}_{i}.log"
-        cmd = [f"{VENV}/bin/vllm", "serve", TARGET, "--served-model-name", "target",
-               "--dtype", "half", "--max-model-len", MAX_MODEL_LEN,
-               "--gpu-memory-utilization", GPU_MEM_UTIL, "--max-num-seqs", MAX_NUM_SEQS,
-               "--port", PORT, "--seed", 0, *extra]
-        cmd = [str(c) for c in cmd]
-        print("$", " ".join(cmd), flush=True)
-        proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT,
-                                start_new_session=True)
-        t0 = time.time()
-        while proc.poll() is None and time.time() - t0 < SERVER_TIMEOUT_S:
-            if _healthy():
-                print(f"server '{tag}' ready after {time.time() - t0:.0f} s")
-                env.setdefault("servers", {})[tag] = {"args": extra, "startup_s": round(time.time() - t0)}
+        for attempt in range(2):
+            wait_gpu_free()
+            proc, log_path, secs = _launch(tag, i, extra, attempt)
+            if proc:
+                print(f"server '{tag}' ready after {secs:.0f} s")
+                env.setdefault("servers", {})[tag] = {"args": extra, "startup_s": round(secs),
+                                                      "extra_env": dict(EXTRA_ENV)}
                 save_env()
                 return proc
-            time.sleep(5)
-        stop_server(proc)
-        print(f"server '{tag}' variant {i} did not start; last log lines:")
-        print("".join(open(log_path).readlines()[-40:]))
+            log = open(log_path).read()
+            print(f"server '{tag}' variant {i} did not start; last log lines:")
+            print("\n".join(log.splitlines()[-25:]))
+            if attempt == 0 and "VLLM_USE_FLASHINFER_SAMPLER" not in EXTRA_ENV \
+                    and flashinfer_build_failed(log):
+                print("FlashInfer could not build its sampling kernel; retrying with vLLM's "
+                      "PyTorch sampler (VLLM_USE_FLASHINFER_SAMPLER=0) for this and later servers.")
+                EXTRA_ENV["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
+                env["server_extra_env"] = dict(EXTRA_ENV)
+                save_env()
+                continue
+            break
     env.setdefault("servers", {})[tag] = {"failed": True, "variants": variants}
     save_env()
     return None
@@ -497,7 +546,7 @@ async def prefix_run(state):
     pd.DataFrame(rows).to_csv(f"{OUT}/prefix_{state}.csv", index=False)
 
 for state, variants in [("on", [["--enable-prefix-caching"]]),
-                        ("off", [["--no-enable-prefix-caching"], ["--enable-prefix-caching=false"]])]:
+                        ("off", [["--no-enable-prefix-caching"]])]:
     await with_server(f"prefix_{state}", variants, [f"prefix_{state}.csv"],
                       lambda state=state: prefix_run(state))
 '''

@@ -153,6 +153,10 @@ def main():
     mem = memory_efficiency(data["micro"], gpu)
     head = (f"vLLM {env.get('vllm_version', '?')} on {env['gpu_name']}, "
             f"TinyLlama-1.1B fp16, measured {env.get('timestamp', '?')}")
+    if env.get("server_extra_env"):
+        head += (". Servers ran with " + ", ".join(f"`{k}={v}`" for k, v in env["server_extra_env"].items())
+                 + " because FlashInfer could not build its sampling kernel, so token sampling used "
+                   "vLLM's PyTorch implementation")
     sections = [f"# vLLM serving: measurements vs model ({gpu.name})\n\n{head}.\n"]
 
     # 1. continuous batching -> fit
