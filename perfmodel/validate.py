@@ -137,7 +137,12 @@ def case_ops(cfg: ModelConfig, case) -> list[Op]:
     return decode_run_ops(cfg, case.batch, case.depth, case.gen)
 
 
-def case_tokens(case) -> int:
+def case_tokens(case) -> float:
+    """Tokens a case produces: an explicit `tokens` column if present, else derived
+    from a llama.cpp benchmark row."""
+    tokens = getattr(case, "tokens", None)
+    if tokens is not None and not pd.isna(tokens):
+        return tokens
     return case.batch * (case.prompt if case.phase == "prefill" else case.gen)
 
 

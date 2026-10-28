@@ -61,3 +61,15 @@ LLAMA_3_1_8B = ModelConfig(
 )
 
 MODELS = {m.name: m for m in (TINYLLAMA_1_1B, LLAMA_3_2_1B, LLAMA_3_1_8B)}
+
+# Small Llama-tokenizer models used as speculative-decoding drafts for TinyLlama.
+LLAMA_68M = ModelConfig(
+    name="llama-68m", hidden=768, n_layers=2, n_heads=12, n_kv_heads=12,
+    intermediate=3072, vocab=32000,
+)
+LLAMA_160M = ModelConfig(
+    name="llama-160m", hidden=768, n_layers=12, n_heads=12, n_kv_heads=12,
+    intermediate=3072, vocab=32000,
+)
+
+DRAFT_MODELS = {"JackFram/llama-68m": LLAMA_68M, "JackFram/llama-160m": LLAMA_160M}

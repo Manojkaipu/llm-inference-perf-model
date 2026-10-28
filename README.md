@@ -148,6 +148,34 @@ The remaining decode error is a consistent +14-17% over-prediction at batch 16-3
 With flash attention off, prefill runs ~2x slower than predicted, because the model
 assumes fused attention.
 
+## Serving engines: vLLM measurements (in progress)
+
+`perfmodel/serving.py` extends the per-pass model to three serving-engine features:
+
+- **Continuous batching.** Each engine step is one forward pass that decodes a token for
+  every running request and also carries, amortized, the chunked prefill of requests
+  joining the batch. All of these share one read of the weights
+  (`ops.mixed_forward_ops`). The model predicts throughput, TTFT and TPOT against the
+  number of concurrent requests.
+- **Prefix caching.** Only the uncached part of the prompt is prefilled, and it attends
+  over the cached prefix.
+- **Speculative decoding.** Each step runs `k` draft decode steps plus one target pass
+  over `k + 1` positions. With per-token acceptance `a`, it emits `(1 - a^(k+1)) / (1 - a)`
+  tokens. Speedup is tokens per step x target step time / speculative step time, which
+  gives a break-even acceptance rate per draft model and batch size.
+
+`notebooks/vllm_serving_benchmark.ipynb` measures all three with vLLM's OpenAI-compatible
+server on a Colab GPU. It uses TinyLlama-1.1B as the target and `JackFram/llama-68m` and
+`llama-160m` as drafts. It reads acceptance counts from vLLM's own `/metrics` counters,
+and it is resumable after a disconnect. `scripts/analyze_vllm.py` fits a vLLM
+efficiency profile on the continuous-batching sweep only. It then predicts prefix-cache
+TTFT and speculative-decoding speedup out-of-sample and writes `reports/vllm_<gpu>.md`.
+
+```
+python notebooks/make_vllm_notebook.py               # regenerate the notebook
+python scripts/analyze_vllm.py measurements/<gpu>_vllm
+```
+
 ## Bottleneck sweep agent
 
 ```
