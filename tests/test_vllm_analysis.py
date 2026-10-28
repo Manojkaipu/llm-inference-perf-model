@@ -10,7 +10,7 @@ from perfmodel.serving import (acceptance_rate, expected_tokens_per_step, predic
 from perfmodel.config import LLAMA_68M
 from perfmodel.vllm_analysis import (acceptance_from_metrics, fit_vllm_profile,
                                      load, memory_efficiency, predict_cb, predict_prefix,
-                                     predict_spec, spec_config_info, summarize_cb,
+                                     predict_spec, predict_spec_from_step_cost, spec_config_info, summarize_cb,
                                      summarize_prefix, summarize_spec, breakeven_rate)
 
 CFG = TINYLLAMA_1_1B
@@ -40,9 +40,10 @@ def _write_synthetic(d, seed=0):
         ttft = p["ttft_s"] * noise(n)
         tpot = p["tpot_s"] * noise(n)
         rows += [{"concurrency": c, "ttft_s": a, "e2e_s": a + (CB_OUT - 1) * b,
-                  "out_tokens": CB_OUT} for a, b in zip(ttft, tpot)]
+                  "out_tokens": CB_OUT, "t_start": i * 0.5} for i, (a, b) in enumerate(zip(ttft, tpot))]
+        metrics = {"vllm:num_preemptions_total": 0.0, "vllm:request_num_preemptions_bucket": 9.0 * n}
         levels.append({"concurrency": c, "n_requests": n, "out_tokens": n * CB_OUT,
-                       "wall_s": n * CB_OUT / p["output_tok_s"], "metrics": "{}"})
+                       "wall_s": n * CB_OUT / p["output_tok_s"], "metrics": json.dumps(metrics)})
     pd.DataFrame(rows).to_csv(d / "cb_requests.csv", index=False)
     pd.DataFrame(levels).to_csv(d / "cb_levels.csv", index=False)
 
@@ -101,6 +102,7 @@ def test_full_analysis_recovers_synthetic_ground_truth(tmp_path):
     assert mem == pytest.approx(TRUE.memory)
 
     cb = summarize_cb(data["cb"], data["cb_levels"])
+    assert (cb.preemptions == 0).all()          # histogram buckets must not be counted
     fit = fit_vllm_profile(CFG, T4, cb, CB_IN, CB_OUT, mem)
     cb = predict_cb(CFG, T4, fit, cb, CB_IN, CB_OUT)
     err = (cb.pred_tpot_s / cb.tpot_p50_s - 1).abs()
@@ -121,6 +123,10 @@ def test_full_analysis_recovers_synthetic_ground_truth(tmp_path):
     assert sd.acceptance_rate.tolist() == pytest.approx(
         [acceptance_rate(ALPHAS[p], 3) for p in sd.prompt_type], rel=1e-6)
     assert (sd.pred_speedup / sd.speedup - 1).abs().max() < 0.08
+    # Step cost does not depend on acceptance, so other prompt types' steps predict speedup.
+    sc = predict_spec_from_step_cost(summarize_spec(data["spec"], data["spec_levels"]))
+    sc = sc[sc.config != "baseline"]
+    assert (sc.pred_speedup_step_cost / sc.speedup - 1).abs().max() < 0.06
     # High acceptance speeds decoding up; very low acceptance slows it down at batch 1.
     s1 = sd[sd.concurrency == 1].set_index("prompt_type").speedup
     assert s1["copy"] > 1.5 and s1["random_t1"] < 1

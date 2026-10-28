@@ -1,0 +1,4 @@
+metric,value,unit
+copy_bw,2.29473e+11,B/s
+read_bw,2.58844e+11,B/s
+matmul_flops_sustained,5.41392e+13,FLOP/s

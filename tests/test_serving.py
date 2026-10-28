@@ -74,3 +74,22 @@ def test_spec_speedup_behaves():
     # Larger batches leave less memory-bound slack, so the same acceptance helps less.
     t64 = spec_step_times(CFG, LLAMA_68M, T4, EFF, k=3, batch=64, ctx=256)
     assert spec_speedup(t64, 3, 3.0) < spec_speedup(t, 3, 3.0)
+
+
+def test_simulation_matches_single_request_and_queues_a_burst():
+    from perfmodel.serving import simulate_closed_loop
+    eff = Efficiency(compute=0.3, memory=0.85, kernel_overhead_s=3e-6)
+    one = simulate_closed_loop(CFG, T4, eff, 1, 3, 512, 32, budget=2048)
+    prefill = pass_time(forward_ops(CFG, 1, 512, 0), T4, eff)
+    step = pass_time(decode_ops(CFG, 1, 512 + 16), T4, eff)
+    assert one[0]["ttft_s"] == pytest.approx(prefill, rel=1e-6)
+    assert one[0]["tpot_s"] == pytest.approx(step, rel=0.05)
+    assert [r["t_start"] for r in one] == sorted(r["t_start"] for r in one)   # closed loop
+    # 8 prompts arriving at once with a 2048-token budget: the first step prefills 4.
+    # In the next step those 4 decode first, leaving 2044 tokens, so 3 more prompts
+    # finish and the 8th spills into a short third step (its last 4 tokens + 7 decodes),
+    # as vLLM schedules it.
+    burst = sorted(r["ttft_s"] for r in simulate_closed_loop(CFG, T4, eff, 8, 8, 512, 4, budget=2048))
+    assert burst[0] == pytest.approx(burst[3])
+    assert burst[4] == pytest.approx(burst[6]) and burst[7] > burst[6]
+    assert burst[4] == pytest.approx(2 * burst[0], rel=0.05)

@@ -1,0 +1,9 @@
+{
+  "compute": 0.3444900415294367,
+  "memory": 0.8628133333333333,
+  "kernel_overhead_s": 3.082186720530328e-06,
+  "mem_utilization": 0.9,
+  "attention_memory": null,
+  "attention_half_work": null,
+  "overlap": 2.233625831935871
+}

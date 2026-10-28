@@ -13,9 +13,9 @@ import pandas as pd
 
 from .config import DRAFT_MODELS, ModelConfig
 from .hardware import GPU, PEAK, Efficiency
-from .serving import (alpha_from_acceptance_rate, continuous_step_ops,
+from .serving import (alpha_from_acceptance_rate, breakeven_acceptance, continuous_step_ops,
                       expected_tokens_per_step, predict_continuous, prefill_time,
-                      spec_speedup, spec_step_times)
+                      simulate_closed_loop, spec_speedup, spec_step_times)
 from .validate import CompiledCases, fit_efficiency
 
 
@@ -62,10 +62,56 @@ def summarize_cb(cb: pd.DataFrame, levels: pd.DataFrame) -> pd.DataFrame:
     lv = levels.set_index("concurrency")
     s["output_tok_s"] = (lv.out_tokens / lv.wall_s).reindex(s.concurrency).to_numpy()
     s["requests_per_s"] = (lv.n_requests / lv.wall_s).reindex(s.concurrency).to_numpy()
+    # The counter only: vLLM also exports a per-request preemption histogram.
     s["preemptions"] = [
-        sum(v for k, v in json.loads(m).items() if "preemption" in k)
+        sum(v for k, v in json.loads(m).items() if k.endswith("num_preemptions_total"))
         for m in lv.metrics.reindex(s.concurrency)]
     return s
+
+
+def assign_waves(cb: pd.DataFrame, gap_s: float = 0.02) -> pd.DataFrame:
+    """Group requests that started within `gap_s` of each other (per concurrency
+    level) into arrival waves, with each request's rank inside its wave.
+
+    With a closed-loop client and fixed output lengths, requests that start
+    together finish together, so their replacements also arrive together."""
+    out = []
+    for _, g in cb.sort_values(["concurrency", "t_start"]).groupby("concurrency"):
+        wave = np.concatenate([[0], np.cumsum(np.diff(g.t_start.to_numpy()) > gap_s)])
+        g = g.assign(wave=wave)
+        g["rank"] = g.groupby("wave").cumcount()
+        g["wave_size"] = g.groupby("wave").t_start.transform("size")
+        out.append(g)
+    return pd.concat(out)
+
+
+def infer_prefill_budget(cb: pd.DataFrame, input_len: int, default: int = 2048) -> int:
+    """Prefill tokens per engine step, read from the data: in the largest arrival
+    wave, prompts prefilled in the same step get their first token together."""
+    w = assign_waves(cb)
+    big = w[w.wave_size == w.wave_size.max()]
+    big = big[big.concurrency == big.concurrency.max()]
+    t = np.sort((big.t_start + big.ttft_s).to_numpy())
+    if len(t) < 8:
+        return default
+    sizes = [len(x) for x in np.split(t, np.where(np.diff(t) > 0.004)[0] + 1)][1:]
+    return int(pd.Series(sizes).mode().iloc[0] * input_len) if sizes else default
+
+
+def simulate_cb(cfg, gpu, eff, summary: pd.DataFrame, cb: pd.DataFrame, input_len: int,
+                output_len: int, budget: int, max_seqs: int) -> pd.DataFrame:
+    """Add scheduler-simulation predictions (same concurrency and request count as
+    measured) to the per-concurrency summary."""
+    out = summary.copy()
+    rows = []
+    for c in out.concurrency:
+        n = int((cb.concurrency == c).sum())
+        sim = pd.DataFrame(simulate_closed_loop(cfg, gpu, eff, int(c), n, input_len,
+                                                output_len, budget, max_seqs))
+        rows.append({"sim_ttft_p50_s": sim.ttft_s.median(), "sim_ttft_p90_s": sim.ttft_s.quantile(0.9),
+                     "sim_tpot_p50_s": sim.tpot_s.median(), "sim_e2e_p50_s": sim.e2e_s.median(),
+                     "sim_output_tok_s": n * output_len / sim.t_end.max()})
+    return pd.concat([out.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
 
 
 def fit_vllm_profile(cfg: ModelConfig, gpu: GPU, summary: pd.DataFrame, input_len: int,
@@ -156,7 +202,24 @@ def summarize_spec(spec: pd.DataFrame, levels: pd.DataFrame) -> pd.DataFrame:
     s["baseline_output_tok_s"] = base.output_tok_s.reindex(idx).to_numpy()
     s["speedup"] = s.baseline_tpot_s / s.tpot_p50_s
     s["throughput_speedup"] = s.output_tok_s / s.baseline_output_tok_s
+    # Cost of one engine step: speculative steps emit tokens_per_step tokens each.
+    s["step_s"] = np.where(s.config == "baseline", s.tpot_p50_s, s.tpot_p50_s * s.tokens_per_step)
     return s
+
+
+def predict_spec_from_step_cost(summary: pd.DataFrame) -> pd.DataFrame:
+    """Speedup predicted from measured tokens per step and the step costs measured
+    on the *other* prompt types (leave one prompt type out). This isolates how
+    speedup depends on acceptance from how well the draft cost is modeled."""
+    out = summary.copy()
+    preds = []
+    for r in out.itertuples():
+        same = out[(out.concurrency == r.concurrency) & (out.prompt_type != r.prompt_type)]
+        spec_step = same[same.config == r.config].step_s.median()
+        base_step = same[same.config == "baseline"].step_s.median()
+        preds.append(np.nan if r.config == "baseline" else r.tokens_per_step * base_step / spec_step)
+    out["pred_speedup_step_cost"] = preds
+    return out
 
 
 def predict_spec(target: ModelConfig, gpu: GPU, eff: Efficiency, summary: pd.DataFrame,
@@ -185,10 +248,11 @@ def _spec_times(target, draft_repo, gpu, eff, k, batch, ctx) -> dict:
 
 
 def spec_curve(target, gpu, eff, info: dict, name: str, batch: int, ctx: int,
-               rates=np.linspace(0.0, 0.98, 50)) -> pd.DataFrame:
-    """Predicted speedup across draft acceptance rates (i.i.d. per-token acceptance)."""
+               rates=np.linspace(0.0, 0.98, 50), times: dict | None = None) -> pd.DataFrame:
+    """Speedup across draft acceptance rates (i.i.d. per-token acceptance), from the
+    model's step costs or from measured ones passed as `times`."""
     draft_repo, k, _ = info[name]
-    t = _spec_times(target, draft_repo, gpu, eff, k, batch, ctx)
+    t = times or _spec_times(target, draft_repo, gpu, eff, k, batch, ctx)
     rows = []
     for rate in rates:
         alpha = alpha_from_acceptance_rate(rate, k)
@@ -198,7 +262,14 @@ def spec_curve(target, gpu, eff, info: dict, name: str, batch: int, ctx: int,
 
 
 def breakeven_rate(target, gpu, eff, info: dict, name: str, batch: int, ctx: int) -> float:
-    """Draft acceptance rate below which speculation slows decoding down."""
-    curve = spec_curve(target, gpu, eff, info, name, batch, ctx, rates=np.linspace(0, 0.999, 400))
-    above = curve[curve.speedup >= 1]
-    return float(above.acceptance_rate.min()) if len(above) else float("nan")
+    """Draft acceptance rate below which speculation slows decoding (model costs)."""
+    draft_repo, k, _ = info[name]
+    t = _spec_times(target, draft_repo, gpu, eff, k, batch, ctx)
+    return breakeven_acceptance(t["spec_step_s"], t["target_step_s"], k)
+
+
+def measured_step_times(summary: pd.DataFrame, name: str, batch: int) -> dict:
+    """Median measured step costs for a config, in the shape spec_curve expects."""
+    at = summary[summary.concurrency == batch]
+    return {"target_step_s": at[at.config == "baseline"].step_s.median(),
+            "spec_step_s": at[at.config == name].step_s.median()}

@@ -22,6 +22,7 @@ The 128- and 2048-token panels were held out from fitting.*
 | 4. Measured T4 runs (llama.cpp) and error report | done ([report](reports/validation_TinyLlama-1.1B_T4_llamacpp.md)) |
 | 5. Sweep agent that writes up bottleneck shifts | done ([example report](reports/bottleneck_20261021-123905.md)) |
 | Follow-up: T4 kernel probe of the small-batch anomaly | done ([report](reports/kernel_probe_t4.md)); per-kernel Nsight timings need a rerun with graph-node tracing |
+| Extension: vLLM serving (continuous batching, prefix caching, speculative decoding) | done ([report](reports/vllm_l4.md)) |
 | Follow-up: H100 calibration | not run; `notebooks/gpu_llamacpp_benchmark.ipynb` supports it on any Colab GPU |
 
 ## Layout
@@ -148,28 +149,47 @@ The remaining decode error is a consistent +14-17% over-prediction at batch 16-3
 With flash attention off, prefill runs ~2x slower than predicted, because the model
 assumes fused attention.
 
-## Serving engines: vLLM measurements (in progress)
+## Serving engines: vLLM on an L4 ([report](reports/vllm_l4.md))
 
-`perfmodel/serving.py` extends the per-pass model to three serving-engine features:
+`perfmodel/serving.py` extends the per-pass model to three serving-engine features. It
+was measured with vLLM 0.32 on a Colab L4, using TinyLlama-1.1B fp16
+(`notebooks/vllm_serving_benchmark.ipynb`, analyzed by `scripts/analyze_vllm.py`).
 
-- **Continuous batching.** Each engine step is one forward pass that decodes a token for
-  every running request and also carries, amortized, the chunked prefill of requests
-  joining the batch. All of these share one read of the weights
-  (`ops.mixed_forward_ops`). The model predicts throughput, TTFT and TPOT against the
-  number of concurrent requests.
-- **Prefix caching.** Only the uncached part of the prompt is prefilled, and it attends
-  over the cached prefix.
-- **Speculative decoding.** Each step runs `k` draft decode steps plus one target pass
-  over `k + 1` positions. With per-token acceptance `a`, it emits `(1 - a^(k+1)) / (1 - a)`
-  tokens. Speedup is tokens per step x target step time / speculative step time, which
-  gives a break-even acceptance rate per draft model and batch size.
+![Speculative decoding speedup vs draft acceptance rate on an L4](figures/vllm_spec_decode_l4.png)
 
-`notebooks/vllm_serving_benchmark.ipynb` measures all three with vLLM's OpenAI-compatible
-server on a Colab GPU. It uses TinyLlama-1.1B as the target and `JackFram/llama-68m` and
-`llama-160m` as drafts. It reads acceptance counts from vLLM's own `/metrics` counters,
-and it is resumable after a disconnect. `scripts/analyze_vllm.py` fits a vLLM
-efficiency profile on the continuous-batching sweep only. It then predicts prefix-cache
-TTFT and speculative-decoding speedup out-of-sample and writes `reports/vllm_<gpu>.md`.
+**Continuous batching (1-128 concurrent requests).** A vLLM efficiency profile is fitted to
+median time per output token. It treats each engine step as a decode for every running
+request plus chunked prefill of new prompts, all sharing one weight read
+(`ops.mixed_forward_ops`). That profile then drives a step-by-step simulation of the
+scheduler: a 2048-token budget per step, decodes first, then prompts in arrival order.
+The simulation predicts throughput within **1.3%**, end-to-end latency within **1.6%**,
+TPOT within **4.3%** and p90 TTFT within **6.5%**. It also reproduces the lockstep
+arrival waves that fixed output lengths create. Median TTFT is under-predicted from 8
+concurrent requests up, by an offset that grows to ~260 ms at 128. That offset is
+probably CPU contention between vLLM's API server and the client on the same VM
+(not measured).
+
+**Prefix caching.** TTFT for a 1920-token prompt falls from 100 ms to 24 ms (**4.2x**) as
+the cached prefix grows to 1792 tokens; with caching off it stays flat. The prefill-only
+model matches the per-token saving to within 5% when it uses the large-matmul
+efficiency from the microbenchmark (44.4 vs 42.1 us per cached token). With the
+decode-fitted efficiency it is 25% too steep.
+
+**Speculative decoding (llama-68m and llama-160m drafts, k = 3 or 5).**
+- A speculative step costs the same whatever the acceptance: across prompts from
+  copying (97% acceptance) to random tokens at temperature 1 (1%), step cost varies by
+  only 2-4%.
+- So speedup = tokens per step x target step / speculative step, which is linear in
+  acceptance (correlation 0.998-1.000 within each configuration). Using step costs
+  measured on the other prompt types, this predicts the speedups with **3.3%** average
+  error (worst 8%).
+- The best case was **2.97x** (68M draft, copying, 85% acceptance).
+- **The draft's cost decides whether it pays off.** The 68M draft breaks even at 7%
+  acceptance with 1 request and 14% with 8. The 160M draft costs 5.5-6.6 ms per draft token, 60-70% of a full
+  target step and about 3.5x the analytical model's estimate. It needs 61-71% acceptance
+  just to break even, so on natural text it slowed decoding to 0.5-0.75x.
+- The analytical model gets the 68M draft roughly right (12% error) but cannot explain
+  the 160M draft's cost; that part was not profiled.
 
 ```
 python notebooks/make_vllm_notebook.py               # regenerate the notebook
